@@ -1,0 +1,6 @@
+node_modules/
+# Upstream Strudel checkouts and everything generated from them stay out of git.
+.cache/
+out/
+dist/
+coverage/

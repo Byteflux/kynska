@@ -1,0 +1,29 @@
+{
+  "name": "kynska",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Docs, skills and tooling for agents that make music with Strudel",
+  "type": "module",
+  "bin": {
+    "kynska": "./src/cli.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@strudel/core": "^1.2.6",
+    "@strudel/mini": "^1.2.6",
+    "@strudel/tonal": "^1.2.6",
+    "@strudel/transpiler": "^1.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
