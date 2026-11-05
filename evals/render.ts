@@ -2,6 +2,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { analyse } from '../src/audio/analyse.ts';
 import { formatLayers, renderLayers } from '../src/audio/layers.ts';
 import { formatMaster, master } from '../src/audio/master.ts';
 import { renderCode } from '../src/audio/render.ts';
@@ -49,13 +50,19 @@ export async function evalRender(code: string, args: EvalRenderOptions, costs = 
     costs.renderSeconds += (rendered.mix.channels[0].length / sampleRate) * (1 + (rendered.layers?.length ?? 0));
     const mastered = args.master === undefined ? undefined : master(rendered.mix.channels, sampleRate, { target: args.master });
     const mix = mastered ? { ...rendered.mix, channels: mastered.channels } : rendered.mix;
+    // Mastering hides a clipping mix; measure the code's own output too.
+    const premaster = mastered ? { clippedSamples: analyse(rendered.mix.channels, sampleRate).clippedSamples, limiterDb: mastered.maxReductionDb } : undefined;
     const dir = directory ?? await mkdtemp(join(tmpdir(), 'kynska-eval-'));
     try {
       const file = join(dir, `render-${costs.renderCalls}.wav`);
       await writeFile(file, encodeWav(mix.channels, sampleRate));
       const report = reportRender(mix, file, sections);
-      const text = [formatReport(report), ...(mastered ? [formatMaster(mastered)] : []), ...(rendered.layers ? [formatLayers(rendered.layers, report)] : [])].join('\n');
-      return { report, events: mix.events, text };
+      const text = [
+        formatReport(report),
+        ...(mastered ? [formatMaster(mastered), `Before mastering: ${premaster!.clippedSamples} clipped samples`] : []),
+        ...(rendered.layers ? [formatLayers(rendered.layers, report)] : []),
+      ].join('\n');
+      return { report, events: mix.events, text, premaster };
     } finally {
       if (!directory) await rm(dir, { recursive: true, force: true });
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { extractCode, runAgent, runTool } from '../evals/agent.ts';
+import { extractCode, readReply, reasoningOptions, retryAfterMs, runAgent, runTool } from '../evals/agent.ts';
 import { eventF1 } from '../evals/score.ts';
 import { describeTasks, scoreTask } from '../evals/tasks.ts';
 import type { PatternEvent } from '../src/patterns/events.ts';
@@ -84,6 +84,63 @@ describe('agent helpers', () => {
     }
   });
 
+  it('waits out a rate limit as the API asks, without spending an attempt or counting it as run time', async () => {
+    const limited = () => new Response('{"error":"rate limited"}', { status: 429, headers: { 'retry-after': '0' } });
+    const network = vi.fn()
+      .mockResolvedValueOnce(limited()).mockResolvedValueOnce(limited()).mockResolvedValueOnce(limited()).mockResolvedValueOnce(limited())
+      .mockResolvedValueOnce(Response.json({ usage: { total_tokens: 5 }, choices: [{ message: { content: 's("bd")' } }] }));
+    vi.stubGlobal('fetch', network);
+    try {
+      const result = await runAgent('brief', 'baseline', { baseUrl: 'https://mock.invalid', apiKey: 'mock', model: 'mock' }, new ReferenceIndex(smallReference));
+      expect(result).toMatchObject({ code: 's("bd")', tokens: 5, rateLimitedSeconds: 0 });
+      expect(network).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(retryAfterMs('34', 0)).toBe(34_000);
+    expect(retryAfterMs(null, 0)).toBe(5000);
+    expect(retryAfterMs('soon', 30_000)).toBe(30_000);
+    expect(retryAfterMs(null, 600_000)).toBe(60_000);
+  });
+
+  // Regression: the server sometimes returned an empty reply with tokens spent
+  // (a stripped tool call), which ended a kynska run with no answer.
+  it('asks again after an empty reply, counting its tokens', async () => {
+    const network = vi.fn()
+      .mockResolvedValueOnce(Response.json({ usage: { total_tokens: 225 }, choices: [{ finish_reason: 'stop', message: { content: '' } }] }))
+      .mockResolvedValueOnce(Response.json({ usage: { total_tokens: 200 }, choices: [{ finish_reason: 'stop', message: { content: '```js\ns("bd")\n```' } }] }));
+    vi.stubGlobal('fetch', network);
+    try {
+      const result = await runAgent('brief', 'baseline', { baseUrl: 'https://mock.invalid', apiKey: 'mock', model: 'mock' }, new ReferenceIndex(smallReference));
+      expect(result).toMatchObject({ code: 's("bd")', tokens: 425 });
+      expect(network).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 10000);
+
+  it('sends reasoning effort and a reasoning budget only when set', () => {
+    expect(reasoningOptions({})).toEqual({});
+    expect(reasoningOptions({ effort: 'medium', reasoningTokens: 16000 })).toEqual({ reasoning_effort: 'medium', reasoning: { max_tokens: 16000 } });
+    expect(reasoningOptions({ reasoningTokens: 8000 })).toEqual({ reasoning: { max_tokens: 8000 } });
+  });
+
+  it('reads a streamed reply: content, a tool call in pieces, finish reason and usage', async () => {
+    const events = [
+      { choices: [{ delta: { reasoning_content: 'thinking' } }] },
+      { choices: [{ delta: { content: 'Here' } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'kynska', arguments: '{"comm' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'and":"check"}' } }] }, finish_reason: 'tool_calls' }] },
+      { choices: [], usage: { total_tokens: 42 } },
+    ];
+    const text = `${events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('')}data: [DONE]\n\n`;
+    // Split mid-line, as the network does.
+    const bytes = new TextEncoder().encode(text);
+    const body = new ReadableStream({ start(c) { c.enqueue(bytes.slice(0, 50)); c.enqueue(bytes.slice(50)); c.close(); } });
+    const reply = await readReply(new Response(body, { headers: { 'content-type': 'text/event-stream' } }));
+    expect(reply).toMatchObject({ finish_reason: 'tool_calls', usage: { total_tokens: 42 }, message: { content: 'Here', tool_calls: [{ id: 'c1', function: { name: 'kynska', arguments: '{"command":"check"}' } }] } });
+  });
+
   it('retains usage when a reply spends every token without answering', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ usage: { total_tokens: 77 }, choices: [{ finish_reason: 'length', message: { content: '' } }] })));
     const costs = { ...emptyCosts(), turns: 0, toolCalls: 0, tokens: 0 };
@@ -104,7 +161,7 @@ function productionRun(): ProductionRun {
     { name: 'quiet', from: 0, to: 1, peakDb: -12, rmsDb: -20, loudnessLufs: -20, silentShare: 0 },
     { name: 'loud', from: 1, to: 2, peakDb: -1, rmsDb: -14, loudnessLufs: -14, silentShare: 0 },
   ];
-  return { cps: .5, events, report, form: { cps: .5, cycles: 2, layers: [{ name: 'all', sounds: ['sine'], events: 2, cycles: '0-1' }] } };
+  return { cps: .5, events, report, form: { cps: .5, cycles: 2, layers: [{ name: 'all', sounds: ['sine'], events: 2, cycles: '0-1' }] }, premaster: { clippedSamples: 0, limiterDb: 6 } };
 }
 
 describe('production criteria', () => {
@@ -114,6 +171,8 @@ describe('production criteria', () => {
     ['loudness', c.loudness(-14), (r) => { r.report.stats.loudnessLufs = -15.01; }],
     ['peak', c.peak(-1), (r) => { r.report.stats.peakDb = -.99; }],
     ['clipping', c.unclipped(), (r) => { r.report.stats.clippedSamples = 1; }],
+    ['clipping before mastering', c.mixUnclipped(), (r) => { r.premaster!.clippedSamples = 1; }],
+    ['limiting', c.limiting(6), (r) => { r.premaster!.limiterDb = 6.01; }],
     ['sounds in every bar', c.sounds(0, 2, ['sine']), (r) => { r.events.pop(); }],
     ['key', c.pitches('sine', { key: [0, 3, 7] }), (r) => { r.events[0].value = { s: 'sine', note: 'cs3' }; }],
     ['range including endpoints', c.pitches('sine', { range: [48, 60] }), (r) => { r.events[1].value = { s: 'sine', note: 61 }; }],
@@ -137,6 +196,9 @@ describe('production criteria', () => {
     expect(c.loudness(-14).pass(run, midi)).toBe(false);
     run.report.sections = [];
     expect(c.contrast('quiet', 'loud', 6).pass(run, midi)).toBe(false);
+    run.premaster = undefined;
+    expect(c.mixUnclipped().pass(run, midi)).toBe(false);
+    expect(c.limiting(6).pass(run, midi)).toBe(false);
   });
 });
 
@@ -156,6 +218,16 @@ describe('produce tasks', () => {
     expect(costs.renderSeconds).toBeCloseTo(task.cycles * 240 / task.bpm, 3);
   }, 20000);
 
+  // Regression: the scoring render masters these briefs, which hid a mix that
+  // clips; an unbalanced mix must now lose points.
+  it('a mastered brief marks down a mix that clips and needs heavy limiting', async () => {
+    const task = produceTasks.find((t) => t.id === 'produce/mastered-beat')!;
+    const result = await scoreTask(task, task.solution.replace(/\.gain\([^)]*\)/g, ''));
+    expect(result.score).toBeLessThan(1);
+    expect(result.detail).toContain('zero clipped samples before mastering');
+    expect(result.detail).toContain('limiter takes at most 6 dB off peaks');
+  }, 20000);
+
   it('invalid code, unknown sounds and silent audio score zero', async () => {
     for (const code of ['nonsense(', 's("no_such_eval_sound")', 'note("c3").s("sine").gain(0)']) {
       expect(await scoreTask(produceTasks[0], code)).toMatchObject({ score: 0 });
@@ -171,6 +243,8 @@ describe('eval rendering', () => {
     expect(result.text).toContain('By section:');
     expect(result.text).toContain('Layers, each rendered alone:');
     expect(result.text).toContain('Master');
+    expect(result.text).toContain('Before mastering: 0 clipped samples');
+    expect(result.premaster).toMatchObject({ clippedSamples: 0 });
     expect(result.report.stats.loudnessLufs).toBeCloseTo(-18, 0);
     expect(result.report.from).toBe(1);
     expect(costs.renderCalls).toBe(1);
@@ -212,8 +286,14 @@ describe('eval summary', () => {
   it('groups repeats by condition and kind with spread, costs and missing answers', () => {
     const row: Row = { task: 'produce/test', kind: 'produce', condition: 'baseline', repeat: 1, score: 1, detail: '', code: 'code', failedToAnswer: false, turns: 1, toolCalls: 0, tokens: 100, seconds: 2, renderCalls: 1, renderSeconds: 16 };
     const text = summarize([row, { ...row, repeat: 2, score: 0, code: '', failedToAnswer: true, tokens: 200 }, { ...row, condition: 'kynska' }], ['baseline', 'kynska']);
-    expect(text).toContain('| baseline | produce | 2 | 0.500 | 0.000–1.000 | 1 | 1.0 | 0.0 | 150.0 | 2.0 | 1.0 | 16.0 | 1 |');
+    expect(text).toContain('| baseline | produce | 2 | 0.500 | 0.000–1.000 | 1 | 1.0 | 0.0 | 150.0 | 2.0 | 1.0 | 16.0 | 1 | 0 |');
     expect(text).toContain('| kynska | produce | 1 | 1.000 | 1.000–1.000 |');
+  });
+
+  it('counts replies cut off by the token cap among the failures to answer', () => {
+    const row: Row = { task: 'a', kind: 'produce', condition: 'baseline', repeat: 1, score: 0, detail: 'agent failed', code: '', failedToAnswer: true, turns: 1, toolCalls: 0, tokens: 0, seconds: 0, renderCalls: 0, renderSeconds: 0 };
+    const rows = [{ ...row, error: 'reply cut off at 16384 tokens before any answer' }, { ...row, error: '500 upstream error' }];
+    expect(summarize(rows, ['baseline'])).toMatch(/\| 2 \| 1 \|\n/);
   });
 
   it('measures spread between repeat means rather than between different tasks', () => {

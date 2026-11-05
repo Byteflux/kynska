@@ -1,5 +1,6 @@
 // Runs the evals: node evals/run.ts [--agent llm|oracle] [--model M]
 //   [--conditions baseline,kynska] [--transcribe N] [--concurrency N] [--minutes M] [--repeats N]
+//   [--temperature T] [--effort low|medium|high|...|default] [--reasoning-tokens N]
 // The llm agent reads KYNSKA_EVAL_BASE_URL and KYNSKA_EVAL_API_KEY (an
 // OpenAI-compatible API). The oracle agent answers with each task's known
 // solution, to prove the tasks and scoring without a model.
@@ -25,6 +26,11 @@ const { values } = parseArgs({
     repeats: { type: 'string', default: '1' },
     // Per kynska run: after this many minutes it is asked for its final code.
     minutes: { type: 'string', default: '6' },
+    // Sampling and reasoning effort, the same for both conditions; see ModelConfig.
+    temperature: { type: 'string', default: '0.6' },
+    effort: { type: 'string', default: 'medium' },
+    // Hard cap on reasoning tokens per reply; 0 leaves it out.
+    'reasoning-tokens': { type: 'string', default: '16000' },
   },
 });
 
@@ -43,6 +49,10 @@ const config =
         apiKey: process.env.KYNSKA_EVAL_API_KEY ?? '',
         model: values.model ?? '',
         budgetMs: Number(values.minutes) * 60_000,
+        temperature: Number(values.temperature),
+        // "default" leaves reasoning_effort out, for models without it.
+        effort: values.effort === 'default' ? undefined : values.effort,
+        reasoningTokens: Number(values['reasoning-tokens']) || undefined,
       }
     : undefined;
 if (config && (!config.baseUrl || !config.apiKey || !config.model)) {
@@ -59,6 +69,9 @@ const rows: Row[] = [];
 const jobs = conditions.flatMap((condition) => tasks.flatMap((task) => Array.from({ length: repeats }, (_, i) => ({ task, condition, repeat: i + 1 }))));
 let done = 0;
 
+/** Elapsed seconds less time spent waiting out rate limits. */
+const ownSeconds = (started: number, costs: AgentCosts) => (performance.now() - started) / 1000 - (costs.rateLimitedSeconds ?? 0);
+
 async function runJob({ task, condition, repeat }: typeof jobs[number]) {
   const started = performance.now();
   const costs: AgentCosts = { ...emptyCosts(), turns: 0, toolCalls: 0, tokens: 0 };
@@ -69,35 +82,29 @@ async function runJob({ task, condition, repeat }: typeof jobs[number]) {
         ? { code: task.solution, transcript: [] as unknown[] }
         : await runAgent(task.prompt, condition, config!, reference, costs);
     const score = answer.code.trim() ? await scoreTask(task, answer.code, costs) : { score: 0, detail: 'no answer' };
-    row = { task: task.id, kind: task.kind, condition, repeat, ...score, ...costs, seconds: (performance.now() - started) / 1000, code: answer.code, failedToAnswer: !answer.code.trim() };
+    row = { task: task.id, kind: task.kind, condition, repeat, ...score, ...costs, seconds: ownSeconds(started, costs), code: answer.code, failedToAnswer: !answer.code.trim() };
     if (answer.transcript.length) await writeFile(join(dir, `${condition}--${task.id.replace(/\//g, '--')}--${repeat}.json`), JSON.stringify(answer.transcript, null, 2));
   } catch (error) {
-    row = { task: task.id, kind: task.kind, condition, repeat, score: 0, detail: 'agent failed', error: (error as Error).message, ...costs, seconds: (performance.now() - started) / 1000, code: '', failedToAnswer: true };
+    row = { task: task.id, kind: task.kind, condition, repeat, score: 0, detail: 'agent failed', error: (error as Error).message, ...costs, seconds: ownSeconds(started, costs), code: '', failedToAnswer: true };
   }
   rows.push(row);
   await appendFile(join(dir, 'results.jsonl'), `${JSON.stringify(row)}\n`);
   done++;
   console.log(`[${done}/${jobs.length}] ${row.condition} ${row.task} #${repeat}: ${row.score.toFixed(2)} (${row.detail}${row.error ? `; ${row.error.slice(0, 80)}` : ''})`);
 }
-// Every kynska job may render, including event tasks. Keep these and production
-// scoring jobs in one pool of at most two; tool-less event jobs use the rest.
-const renders = jobs.filter((j) => j.condition === 'kynska' || j.task.kind === 'produce');
-const events = jobs.filter((j) => j.condition !== 'kynska' && j.task.kind !== 'produce');
-const renderLimit = Math.min(2, concurrency);
-if (concurrency <= 2) {
-  await pool(jobs, concurrency, runJob);
-} else {
-  await Promise.all([pool(renders, renderLimit, runJob), pool(events, Math.max(1, concurrency - renderLimit), runJob)]);
-}
+// Jobs mostly wait on the model. Renders (agent drafts and production scoring)
+// take a slot in evalRender, which keeps at most two render workers running
+// across the process whatever the job concurrency.
+await pool(jobs, concurrency, runJob);
 
 const lines = [
   `# Eval run ${runId}`,
   '',
-  `Agent: ${values.agent}${config ? `, model ${config.model}` : ''}. ${tasks.length} tasks, ${repeats} repeats.`,
+  `Agent: ${values.agent}${config ? `, model ${config.model}, temperature ${config.temperature}, reasoning effort ${config.effort ?? 'model default'}, reasoning budget ${config.reasoningTokens ?? 'none'}` : ''}. ${tasks.length} tasks, ${repeats} repeats.`,
   '',
   summarize(rows, conditions),
   '',
-  'Render calls include agent drafts and final scoring renders. Render seconds count generated audio, including each solo layer and tails; seconds is elapsed wall time. Failed to answer counts empty replies and agent errors; invalid code is an answered task scoring zero.',
+  'Render calls include agent drafts and final scoring renders. Render seconds count generated audio, including each solo layer and tails; seconds is elapsed wall time less any wait for API rate limits (rateLimitedSeconds in results.jsonl). Failed to answer counts empty replies and agent errors; invalid code is an answered task scoring zero.',
 ];
 const summary = lines.join('\n');
 await writeFile(join(dir, 'summary.md'), `${summary}\n`);

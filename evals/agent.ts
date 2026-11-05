@@ -17,10 +17,18 @@ import { emptyCosts, evalRender, type RenderCosts } from './render.ts';
 export type Condition = 'baseline' | 'kynska';
 
 /** `budgetMs`: wall-clock time after which a kynska run stops taking turns and
- * is asked for its final code, as when it runs out of turns. */
-export type ModelConfig = { baseUrl: string; apiKey: string; model: string; budgetMs?: number };
+ * is asked for its final code, as when it runs out of turns.
+ * `temperature` and `effort` (reasoning_effort, omitted when unset) apply to
+ * both conditions alike. At temperature 0 GLM-5.3's reasoning fell into a
+ * repetition loop ("Hmm, hmm, ...") after about 25k tokens; at its default
+ * effort it deliberated past 65k tokens without answering a production brief;
+ * at medium effort it still looped in self-checks on some transcriptions after
+ * about 17k. `reasoningTokens` is a hard budget the server enforces, after
+ * which the model answers. */
+export type ModelConfig = { baseUrl: string; apiKey: string; model: string; budgetMs?: number; temperature?: number; effort?: string; reasoningTokens?: number };
 
-export type AgentCosts = RenderCosts & { turns: number; toolCalls: number; tokens: number };
+/** `rateLimitedSeconds`: time spent waiting out 429s, not counted as the run's own. */
+export type AgentCosts = RenderCosts & { turns: number; toolCalls: number; tokens: number; rateLimitedSeconds?: number };
 export type AgentResult = AgentCosts & { code: string; transcript: unknown[] };
 
 type Message = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string | null; tool_calls?: ToolCall[]; tool_call_id?: string };
@@ -110,32 +118,116 @@ export async function runTool(args: Record<string, any>, reference: ReferenceInd
 }
 
 /** Room for a reasoning model's thinking as well as its reply: at 4096,
- * GLM-5.3 spent every token reasoning on half the tasks and wrote no code. */
-const MAX_REPLY_TOKENS = 16384;
+ * GLM-5.3 spent every token reasoning on half the tasks and wrote no code.
+ * Bounding the reasoning is the effort setting's job; this is headroom. */
+const MAX_REPLY_TOKENS = 32768;
+const REPLY_TIMEOUT_MS = 30 * 60_000;
 
-async function complete(config: ModelConfig, messages: Message[], tools: boolean, recordTokens: (tokens: number) => void): Promise<Message> {
+/** The request's reasoning settings, each omitted when unset. */
+export function reasoningOptions({ effort, reasoningTokens }: Pick<ModelConfig, 'effort' | 'reasoningTokens'>) {
+  return { ...(effort ? { reasoning_effort: effort } : {}), ...(reasoningTokens ? { reasoning: { max_tokens: reasoningTokens } } : {}) };
+}
+
+type Reply = { message: Message; finish_reason?: string; usage?: { total_tokens?: number } };
+
+/**
+ * Reads a chat completion, streamed (server-sent events) or as one JSON body.
+ * Replies are streamed because a long reasoning reply sent whole arrives after
+ * undici's 300 s headers timeout and fails as "fetch failed".
+ */
+export async function readReply(response: Response): Promise<Reply> {
+  if (!response.headers.get('content-type')?.includes('text/event-stream')) {
+    const data = await response.json();
+    return { ...data.choices[0], usage: data.usage };
+  }
+  const message: Message = { role: 'assistant', content: '' };
+  const calls: ToolCall[] = [];
+  let finish_reason: string | undefined;
+  let usage: Reply['usage'];
+  let buffer = '';
+  const decoder = new TextDecoder();
+  const take = (line: string) => {
+    if (!line.startsWith('data:')) return;
+    const payload = line.slice(5).trim();
+    if (payload === '[DONE]') return;
+    const data = JSON.parse(payload);
+    if (data.usage) usage = data.usage;
+    const choice = data.choices?.[0];
+    if (!choice) return;
+    finish_reason = choice.finish_reason ?? finish_reason;
+    message.content += choice.delta?.content ?? '';
+    // Tool calls arrive in pieces keyed by index: id and name once, arguments in chunks.
+    for (const piece of choice.delta?.tool_calls ?? []) {
+      const call = (calls[piece.index ?? 0] ??= { id: '', type: 'function', function: { name: '', arguments: '' } });
+      if (piece.id) call.id = piece.id;
+      if (piece.function?.name) call.function.name += piece.function.name;
+      if (piece.function?.arguments) call.function.arguments += piece.function.arguments;
+    }
+  };
+  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop()!;
+    for (const line of lines) take(line.trim());
+  }
+  take(buffer.trim());
+  if (calls.length) message.tool_calls = calls.filter(Boolean);
+  return { message, finish_reason, usage };
+}
+
+/** Longest a single model call waits out rate limits before it fails. */
+const MAX_RATE_LIMIT_WAIT_MS = 20 * 60_000;
+
+/** Milliseconds to wait on a 429: the Retry-After seconds if given, else a
+ * backoff from 5 s doubling with the time already waited, at most 60 s. */
+export function retryAfterMs(header: string | null, waitedMs: number): number {
+  const seconds = Number(header);
+  if (header !== null && header.trim() !== '' && Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  return Math.min(60_000, Math.max(5000, waitedMs));
+}
+
+async function complete(config: ModelConfig, messages: Message[], tools: boolean, costs: AgentCosts): Promise<Message> {
   let lastError: unknown;
+  let rateLimitedMs = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
-    let data: { choices: { message: Message; finish_reason?: string }[]; usage?: { total_tokens?: number } };
+    let data: Reply;
     try {
       const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({ model: config.model, messages, temperature: 0, max_tokens: MAX_REPLY_TOKENS, ...(tools ? { tools: [TOOL] } : {}) }),
-        signal: AbortSignal.timeout(600_000),
+        body: JSON.stringify({ model: config.model, messages, temperature: config.temperature ?? 0, ...reasoningOptions(config), max_tokens: MAX_REPLY_TOKENS, stream: true, stream_options: { include_usage: true }, ...(tools ? { tools: [TOOL] } : {}) }),
+        signal: AbortSignal.timeout(REPLY_TIMEOUT_MS),
       });
+      // Rate limited: wait as long as the API asks and try again, without
+      // spending an attempt; the wait is not the run's own time.
+      if (response.status === 429 && rateLimitedMs < MAX_RATE_LIMIT_WAIT_MS) {
+        await response.body?.cancel();
+        const waitMs = retryAfterMs(response.headers.get('retry-after'), rateLimitedMs);
+        rateLimitedMs += waitMs;
+        costs.rateLimitedSeconds = (costs.rateLimitedSeconds ?? 0) + waitMs / 1000;
+        await new Promise((r) => setTimeout(r, waitMs));
+        attempt--;
+        continue;
+      }
       if (!response.ok) throw new Error(`${response.status} ${(await response.text()).slice(0, 300)}`);
-      data = await response.json();
+      data = await readReply(response);
     } catch (error) {
       lastError = error;
       await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
       continue;
     }
-    const { message, finish_reason } = data.choices[0];
-    recordTokens(data.usage?.total_tokens ?? 0);
+    const { message, finish_reason } = data;
+    costs.tokens += data.usage?.total_tokens ?? 0;
     // A reply cut off before any answer is the model's failure, not a network one: no retry.
     if (finish_reason === 'length' && !message.content?.trim() && !message.tool_calls?.length) {
       throw new Error(`reply cut off at ${MAX_REPLY_TOKENS} tokens before any answer`);
+    }
+    // An empty reply that still spent tokens: GLM-5.3 asked for final code
+    // sometimes emits a tool call the server strips from the content without
+    // returning it (about 1 in 3 replays). Ask again, like a failed request.
+    if (!message.content?.trim() && !message.tool_calls?.length) {
+      lastError = new Error(`empty reply (${data.usage?.total_tokens ?? 0} tokens, finish ${finish_reason ?? 'unknown'}) after ${attempt + 1} attempts`);
+      continue;
     }
     return message;
   }
@@ -164,9 +256,11 @@ async function runAgentTurns(prompt: string, condition: Condition, config: Model
   ];
   const deadline = performance.now() + (config.budgetMs ?? Infinity);
   let turn = 1;
-  for (; turn <= (condition === 'kynska' ? MAX_TURNS : 1) && (turn === 1 || performance.now() < deadline); turn++) {
+  // Waiting out rate limits does not use up the turn budget.
+  const ownTime = () => performance.now() - (costs.rateLimitedSeconds ?? 0) * 1000;
+  for (; turn <= (condition === 'kynska' ? MAX_TURNS : 1) && (turn === 1 || ownTime() < deadline); turn++) {
     costs.turns = turn;
-    const message = await complete(config, messages, condition === 'kynska', (used) => { costs.tokens += used; });
+    const message = await complete(config, messages, condition === 'kynska', costs);
     messages.push({ role: 'assistant', content: message.content ?? '', ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}) });
     if (condition === 'baseline' || !message.tool_calls?.length) return { code: extractCode(message.content ?? ''), ...costs, transcript: messages };
     for (const call of message.tool_calls) {
@@ -184,7 +278,7 @@ async function runAgentTurns(prompt: string, condition: Condition, config: Model
   // Out of turns or time: ask for the final answer without tools.
   messages.push({ role: 'user', content: 'Reply now with your final code in one ```js block.' });
   costs.turns = turn;
-  const message = await complete(config, messages, false, (used) => { costs.tokens += used; });
+  const message = await complete(config, messages, false, costs);
   messages.push({ role: 'assistant', content: message.content ?? '' });
   return { code: extractCode(message.content ?? ''), ...costs, transcript: messages };
 }

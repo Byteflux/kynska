@@ -193,8 +193,14 @@ npm run evals -- --model <model> --repeats 3 --concurrency 4 --minutes 6
 baseline,kynska` chooses conditions; `--transcribe N` changes the number of
 transcription tasks (default 16). `--minutes M` is the Kynska agent's turn budget
 in minutes (default 6), after which it is asked for final code. `--concurrency N`
-caps concurrent jobs (default 4); jobs that can render run at most two at once,
-with each job's layer renders performed one at a time.
+caps concurrent jobs (default 4); whatever it is, at most two renders run at
+once across the run, with each job's layer renders performed one at a time. `--temperature T`
+(default 0.6), `--effort E` (`reasoning_effort`, default `medium`; `default`
+leaves it out) and `--reasoning-tokens N` (a hard reasoning budget per reply,
+default 16000; 0 leaves it out) apply to both conditions. A reasoning model at
+temperature 0 can loop in its reasoning, and even at medium effort it can fall
+into repeated self-checks and spend every reply token without answering; the
+budget makes it answer. Replies are streamed, so long ones do not time out.
 
 The baseline has no tools and returns code. The Kynska agent can draft renders,
 measure sections and layers, use `form`, and master audio. Eval renders download
@@ -203,14 +209,16 @@ cached sounds on a machine with no network), write WAVs in temporary directories
 and remove them after the run; each render is capped at 32 seconds including
 tails. Production answers
 from both conditions get the same final render, with mastering applied only
-when the brief asks for it. Evaluation errors and unplayable sounds score zero.
+when the brief asks for it; on those briefs the mix before mastering must not
+clip and must need at most 6 dB of limiting. Evaluation errors and unplayable sounds score zero.
 The oracle uses known solutions without model or network calls and exits with
 a failure status if any task scores below 1.
 
 Any OpenAI-compatible API works. Results go to `out/evals/<run>/`: `summary.md`,
 `results.jsonl`, and each conversation (separate files for each repeat).
 The summary groups runs by condition and task kind, reporting mean scores,
-the min–max of each repeat's mean score, perfect runs and failures to answer.
+the min–max of each repeat's mean score, perfect runs and failures to answer,
+and how many of those failures were replies cut off by the token cap.
 That range measures run-to-run spread rather than differences between tasks.
 Its costs are per-run means:
 turns, tool calls, tokens, elapsed seconds, render calls and rendered audio
