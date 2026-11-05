@@ -6,7 +6,9 @@ import type { Language } from '../patterns/evaluate.ts';
 import type { PatternEvent } from '../patterns/events.ts';
 
 export type RenderOptions = {
-  /** Cycles to render from the start. Default 4. */
+  /** First cycle to render. Default 0. Events that start before it are not played, so their tails are missing. */
+  from?: number;
+  /** Cycles to render, from `from`. Default 4. */
   cycles?: number;
   /** Default 48000, the rate loudness measurement is specified at. */
   sampleRate?: number;
@@ -14,7 +16,7 @@ export type RenderOptions = {
   tail?: number;
   /** Refuse renders longer than this many seconds. Default 600. */
   maxSeconds?: number;
-  /** Give up after this many seconds of wall time. Default 120. */
+  /** Give up after this many seconds of wall time. Default 600: a 2-minute piece takes about 90 s. */
   timeout?: number;
   /** 'mondo' for code written entirely in Mondo notation. Default 'js'. */
   language?: Language;
@@ -26,6 +28,8 @@ export type Rendered = {
   sampleRate: number;
   /** Tempo in cycles per second. */
   cps: number;
+  /** First rendered cycle; time 0 of the audio. */
+  from: number;
   cycles: number;
   /** Events that start within the rendered cycles. */
   events: PatternEvent[];
@@ -37,8 +41,9 @@ export type Rendered = {
 
 /** Evaluates Strudel code the way the REPL does and renders it. Throws on evaluation errors. */
 export function renderCode(code: string, options: RenderOptions = {}): Promise<Rendered> {
-  const settings: Required<RenderOptions> = { cycles: 4, sampleRate: 48000, tail: 0, maxSeconds: 600, timeout: 120, language: 'js', ...options };
+  const settings: Required<RenderOptions> = { from: 0, cycles: 4, sampleRate: 48000, tail: 0, maxSeconds: 600, timeout: 600, language: 'js', ...options };
   if (!(settings.cycles > 0)) return Promise.reject(new RangeError(`cycles must be positive, got ${settings.cycles}`));
+  if (!(settings.from >= 0)) return Promise.reject(new RangeError(`from must be zero or more, got ${settings.from}`));
   if (!(settings.tail >= 0)) return Promise.reject(new RangeError(`tail must be zero or more, got ${settings.tail}`));
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./render-worker.ts', import.meta.url), { workerData: { code, options: settings } });

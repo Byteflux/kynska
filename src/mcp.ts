@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { formatLayers, renderLayers } from './audio/layers.ts';
 import { renderCode } from './audio/render.ts';
 import { formatReport, reportRender } from './audio/report.ts';
 import { encodeWav } from './audio/wav.ts';
@@ -13,6 +14,8 @@ import { checkCode, formatCheck } from './patterns/check.ts';
 import { diffCode, formatDiff } from './patterns/diff.ts';
 import { languageOf, type Language } from './patterns/evaluate.ts';
 import { runPattern } from './patterns/events.ts';
+import { formatForm, formOf } from './patterns/form.ts';
+import { parseSections, windowOf } from './patterns/sections.ts';
 import { formatEntry, loadReference, MissingReferenceError, ReferenceIndex } from './reference/lookup.ts';
 
 const source = {
@@ -20,6 +23,11 @@ const source = {
   file: z.string().optional().describe('A file with Strudel code, instead of code (.mondo for Mondo notation)'),
   mondo: z.boolean().optional().describe('The code is Mondo notation throughout'),
 };
+
+const sections = z
+  .string()
+  .optional()
+  .describe('Section lengths in cycles, in order, as arrange() takes them: "intro=4,A=16,B=12,outro=8"');
 
 async function codeOf(args: { code?: string; file?: string; mondo?: boolean }): Promise<{ code: string; language: Language }> {
   if (args.code !== undefined) return { code: args.code, language: args.mondo ? 'mondo' : 'js' };
@@ -124,21 +132,42 @@ export async function serveMcp(): Promise<void> {
     'render',
     {
       description:
-        "Render Strudel code to a WAV file with Strudel's audio engine and measure it: peak, loudness (LUFS), clipping, silence, and whether sound starts at the event times.",
+        "Render Strudel code to a WAV file with Strudel's audio engine and measure it: peak (and where), loudness (LUFS), clipping, silence, and whether sound starts at the event times; per section with sections, per layer with layers. A full render takes about 3/4 of the audio's length: draft one section with from/to.",
       inputSchema: {
         ...source,
         out: z.string().describe('Path of the WAV file to write'),
-        cycles: z.number().positive().optional().describe('Cycles (default 4)'),
+        cycles: z.number().positive().optional().describe('Cycles from `from` (default 4, or all sections)'),
+        from: z.number().min(0).optional().describe('First cycle to render (default 0)'),
+        to: z.number().positive().optional().describe('Render up to this cycle, instead of cycles'),
+        sections,
+        layers: z.boolean().optional().describe('Also render each $: or labelled layer alone and measure it'),
         tail: z.number().min(0).optional().describe('Seconds after the last cycle, for tails (default 0)'),
       },
     },
     tool(async (args) => {
       const { code, language } = await codeOf(args);
-      const rendered = await renderCode(code, { cycles: args.cycles ?? 4, tail: args.tail ?? 0, language });
+      const bySection = args.sections ? parseSections(args.sections) : undefined;
+      const options = { ...windowOf(args, 4, bySection), tail: args.tail ?? 0, language };
+      const { mix, layers } = args.layers ? await renderLayers(code, options, bySection) : { mix: await renderCode(code, options), layers: undefined };
       const file = resolve(args.out);
       await mkdir(dirname(file), { recursive: true });
-      await writeFile(file, encodeWav(rendered.channels, rendered.sampleRate));
-      return formatReport(reportRender(rendered, file));
+      await writeFile(file, encodeWav(mix.channels, mix.sampleRate));
+      const report = reportRender(mix, file, bySection);
+      return layers ? `${formatReport(report)}\n${formatLayers(layers, report)}` : formatReport(report);
+    }),
+  );
+
+  server.registerTool(
+    'form',
+    {
+      description:
+        'The form of a piece from its events: which layer ($: or named label) plays which sounds in which cycles; with sections, events per layer per section and the note names each section uses.',
+      inputSchema: { ...source, cycles: z.number().positive().optional().describe('Cycles (default: all sections, or 8)'), sections },
+    },
+    tool(async (args) => {
+      const { code, language } = await codeOf(args);
+      const bySection = args.sections ? parseSections(args.sections) : undefined;
+      return formatForm(await formOf(code, windowOf(args, 8, bySection).cycles, language, bySection));
     }),
   );
 

@@ -13,12 +13,13 @@ Balance the layers, keep the peak below full scale, and hit a loudness target, a
 - `.postgain(x)` and `.velocity(x)` are not linear: 0.5 measured 8 dB quieter. Leave them for musical accents.
 - Layers add up: two layers peaking together can sit up to 6 dB above either alone, so a mix of moderate layers can still clip.
 - Reverb (`room`) and delay add level and ring past the end of the last cycle: render with `--tail 2`.
+- In a full mix, reverb, delay, noise and overlapping layers all read as onsets, so `render` says the onsets were not checked; each layer's row in `--layers` checks them.
 
 ## Steps
 
-1. **Measure each layer alone**: solo it with `S$:` and render. Note each layer's loudness.
-2. **Balance with `gain`** until the solo loudnesses relate as intended (for example kick and bass within a couple of dB of each other, pads several dB below, hats below the snare). Change one layer at a time and re-measure.
-3. **Render the full mix.** If the peak is above -1 dBFS, multiply every layer's gain by `10^(-(peak + 1) / 20)`, which lands the peak at -1 dBFS (a mix peaking at +3.3 dBFS needs a factor of 0.61). Re-render to confirm.
+1. **Measure each layer alone**: `kynska render piece.js --layers --sections <form>` renders every `$:` layer alone and reports its peak and loudness, overall and per section, beside the mix. On a long piece, draft on its busiest section: add `--from`/`--to`.
+2. **Balance with `gain`** until the layer loudnesses relate as intended (for example kick and bass within a couple of dB of each other, pads several dB below, hats below the snare). Change a few layers, then re-measure.
+3. **Render the full mix.** The report names the cycle where the peak is. If the peak is above -1 dBFS, multiply every layer's gain by `10^(-(peak + 1) / 20)`, which lands the peak at -1 dBFS (a mix peaking at +3.3 dBFS needs a factor of 0.61). Re-render to confirm.
 4. **Loudness**: if the mix is well below the target after step 3, the peaks are limiting it; lower the loudest transient layer (often the kick) slightly and raise the rest, or add `.compressor("-20:4:10:.002:.1")` to that layer, then repeat step 3.
 
 Done when the full render reports 0 clipped samples, peak at or below -1 dBFS, and loudness within 2 LU of the target.

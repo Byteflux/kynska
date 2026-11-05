@@ -7,6 +7,8 @@ export type AudioStats = {
   channels: number;
   /** Highest absolute sample, in dBFS (-Infinity for digital silence). */
   peakDb: number;
+  /** When the highest sample is, in seconds from the start. */
+  peakAt: number;
   /** RMS over the whole file and all channels, in dBFS. */
   rmsDb: number;
   /** Integrated loudness (ITU-R BS.1770-4, gated), in LUFS; null when too short or too quiet to measure. */
@@ -101,13 +103,18 @@ export function loudness(channels: Float32Array[], sampleRate: number): number |
 export function analyse(channels: Float32Array[], sampleRate: number): AudioStats {
   const frames = channels[0]?.length ?? 0;
   let peak = 0;
+  let peakIndex = 0;
   let sumSq = 0;
   let sum = 0;
   let clipped = 0;
   for (const ch of channels) {
-    for (const x of ch) {
+    for (let i = 0; i < ch.length; i++) {
+      const x = ch[i];
       const abs = Math.abs(x);
-      if (abs > peak) peak = abs;
+      if (abs > peak) {
+        peak = abs;
+        peakIndex = i;
+      }
       if (abs >= 0.999) clipped++;
       sumSq += x * x;
       sum += x;
@@ -129,6 +136,7 @@ export function analyse(channels: Float32Array[], sampleRate: number): AudioStat
     sampleRate,
     channels: channels.length,
     peakDb: db(peak),
+    peakAt: peakIndex / sampleRate,
     rmsDb: db(Math.sqrt(sumSq / total)),
     loudnessLufs: loudness(channels, sampleRate),
     clippedSamples: clipped,

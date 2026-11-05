@@ -8,6 +8,8 @@ import { OUT_DIR, ROOT } from '../src/paths.ts';
 import { checkCode, formatCheck } from '../src/patterns/check.ts';
 import { diffCode, formatDiff } from '../src/patterns/diff.ts';
 import { runPattern } from '../src/patterns/events.ts';
+import { formatForm, formOf } from '../src/patterns/form.ts';
+import { parseSections, windowOf } from '../src/patterns/sections.ts';
 import { formatEntry, type ReferenceIndex } from '../src/reference/lookup.ts';
 
 export type Condition = 'baseline' | 'kynska';
@@ -40,12 +42,13 @@ const TOOL = {
   type: 'function',
   function: {
     name: 'kynska',
-    description: 'Run a kynska command on Strudel code: check, events, diff, lookup, or read a skill or docs file.',
+    description: 'Run a kynska command on Strudel code: check, events, diff, form, lookup, or read a skill or docs file.',
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', enum: ['check', 'events', 'diff', 'lookup', 'read'] },
-        code: { type: 'string', description: 'Strudel code, for check and events' },
+        command: { type: 'string', enum: ['check', 'events', 'diff', 'form', 'lookup', 'read'] },
+        code: { type: 'string', description: 'Strudel code, for check, events and form' },
+        sections: { type: 'string', description: 'for form: section lengths in cycles, e.g. "intro=4,A=8"' },
         before: { type: 'string', description: 'for diff: the earlier code' },
         after: { type: 'string', description: 'for diff: the later code' },
         cycles: { type: 'number', description: 'cycles to query (events, diff, check)' },
@@ -70,6 +73,10 @@ export async function runTool(args: Record<string, any>, reference: ReferenceInd
       }
       case 'diff':
         return formatDiff(await diffCode(String(args.before ?? ''), String(args.after ?? ''), cycles ?? 1), cycles ?? 1);
+      case 'form': {
+        const sections = args.sections ? parseSections(String(args.sections)) : undefined;
+        return formatForm(await formOf(String(args.code ?? ''), Math.min(windowOf({ cycles }, 8, sections).cycles, 64), 'js', sections));
+      }
       case 'lookup': {
         const entry = reference.find(String(args.name ?? ''));
         if (!entry) {
@@ -84,7 +91,7 @@ export async function runTool(args: Record<string, any>, reference: ReferenceInd
         return await readFile(path, 'utf8');
       }
       default:
-        return `Unknown command "${args.command}"; use check, events, diff, lookup or read.`;
+        return `Unknown command "${args.command}"; use check, events, diff, form, lookup or read.`;
     }
   } catch (error) {
     return `error: ${(error as Error).message}`;

@@ -15,6 +15,9 @@ A loop becomes a piece when layers enter, leave and change on known cycles. Plan
 
 ## Proving it
 
-- The total length is the sum of the sections. Query all of it: `kynska events piece.js --cycles <total> --json`, and check each section boundary: a layer's first event is at the cycle its section starts, and its last event ends where the section ends.
-- Render the whole piece: `kynska render piece.js --cycles <total> --tail 2`, where the tail keeps reverb and release that ring past the end.
+Give the form to the tools as section lengths, the same numbers `arrange` takes: `--sections intro=4,A=16,B=12,outro=8`.
+
+- **`kynska form piece.js --sections <form>`** lists each layer's sounds and the cycles it plays in, a grid of events per layer per section, and the notes each section uses. Compare it with the plan: every layer present exactly in its sections, and a key change visible in the notes (B♭ in place of B).
+- **Draft a section**: `kynska render piece.js --from 20 --to 32` renders only cycles 20 to 32.
+- **Render the whole piece once**, at the end: `kynska render piece.js --sections <form> --tail 2` (the tail keeps reverb and release that ring past the end) reports level and loudness per section, and the cycle where the peak is.
 - When one section changes, `kynska diff` against the previous version over the full length shows that only that section's events moved.

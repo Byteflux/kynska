@@ -5,7 +5,8 @@ import { dirname, join, relative } from 'node:path';
 import { parseArgs } from 'node:util';
 import { analyse, detectOnsets } from './audio/analyse.ts';
 import { renderCode } from './audio/render.ts';
-import { formatReport, formatStats, reportRender } from './audio/report.ts';
+import { formatLayers, renderLayers } from './audio/layers.ts';
+import { formatReport, formatSections, formatStats, reportRender, sectionStats } from './audio/report.ts';
 import { decodeWav, encodeWav } from './audio/wav.ts';
 import { buildDocs, formatDocsResult } from './docs/build.ts';
 import { OUT_DIR, ROOT } from './paths.ts';
@@ -13,6 +14,8 @@ import { checkCode, formatCheck } from './patterns/check.ts';
 import { diffCode, formatDiff } from './patterns/diff.ts';
 import { languageOf, type Language } from './patterns/evaluate.ts';
 import { runPattern } from './patterns/events.ts';
+import { formatForm, formOf } from './patterns/form.ts';
+import { parseSections, windowOf as cycleWindow } from './patterns/sections.ts';
 import { buildReference } from './reference/build.ts';
 import { formatEntry, loadReference, MissingReferenceError, ReferenceIndex } from './reference/lookup.ts';
 import { readPin } from './reference/pin.ts';
@@ -29,19 +32,28 @@ Commands:
   lookup <name> [--json]                  Show a function from the Strudel reference
   lookup --tag <tag> | --module <module>  List functions by tag or module
   lookup --tags                           List the tags and how many functions have each
-  render [file] [--cycles N] [--out file.wav] [--tail S] [--sample-rate R] [--json]
+  form [file] [--cycles N] [--sections S] [--json]
+                                          Which layer plays which sounds in which cycles; with
+                                          sections, events per section and the notes each uses
+  render [file] [--cycles N | --from A --to B] [--sections S] [--layers] [--out file.wav]
+         [--tail S] [--sample-rate R] [--json]
                                           Render to a WAV file (default 4 cycles, ./render.wav)
-                                          and measure it: level, loudness, clipping, silence, onsets
-  analyse <file.wav> [--json]             Measure any WAV file the same way (onsets: detected count)
+                                          and measure it: level, loudness, clipping, silence, onsets;
+                                          --sections adds them per section, --layers per layer
+  analyse <file.wav> [--sections S --cps C] [--json]
+                                          Measure any WAV file the same way (onsets: detected count)
   reference build                         Fetch the pinned Strudel source and build out/reference.json
   docs build                              Build out/reference.json, the docs pages, llms.txt and llms-full.txt
   docs path                               Print where the built docs are (llms.txt, llms-full.txt, pages, reference.md)
   upstream                                Compare the pinned Strudel with its latest release and main
-  mcp                                     Serve check, events, diff, lookup, render and docs_path as MCP tools (stdio)
+  mcp                                     Serve check, events, diff, form, lookup, render and docs_path as MCP tools (stdio)
 
 Code is read from a file, or from stdin when the file is "-" or omitted. It is JavaScript,
 which can use mondo\`...\` and tidal\`...\` inline; --mondo (or a .mondo file) reads it as
 Mondo notation throughout.
+Sections are lengths in cycles, in order, as arrange() takes them: "intro=4,A=16,B=12,outro=8"
+(or "4,16,12,8"); given alone, they also set how many cycles to render or list.
+--from/--to render cycles A to B only, e.g. one section as a draft.
 Exit codes: 0 success; 1 errors found (check), a difference (diff), an event that failed to
 play (render) or failure; 2 bad usage.`;
 
@@ -77,6 +89,11 @@ async function main(argv: string[]): Promise<number> {
     allowPositionals: true,
     options: {
       cycles: { type: 'string' },
+      from: { type: 'string' },
+      to: { type: 'string' },
+      sections: { type: 'string' },
+      layers: { type: 'boolean', default: false },
+      cps: { type: 'string' },
       out: { type: 'string' },
       tail: { type: 'string' },
       'sample-rate': { type: 'string' },
@@ -96,10 +113,27 @@ async function main(argv: string[]): Promise<number> {
   const print = (value: unknown, text: () => string) => console.log(values.json ? JSON.stringify(value, null, 2) : text());
   // Mondo notation throughout: --mondo, or a file ending in .mondo.
   const language = (file?: string): Language => (values.mondo ? 'mondo' : languageOf(file));
+  const sections = (() => {
+    if (values.sections === undefined) return undefined;
+    try {
+      return parseSections(values.sections);
+    } catch (error) {
+      throw new UsageError(`--sections: ${(error as Error).message}`);
+    }
+  })();
+  const windowOf = (fallback: number) => {
+    const number = (v?: string) => (v === undefined ? undefined : Number(v));
+    try {
+      return cycleWindow({ from: number(values.from), to: number(values.to), cycles: number(values.cycles) }, fallback, sections);
+    } catch (error) {
+      throw new UsageError((error as Error).message);
+    }
+  };
 
   switch (command) {
     case 'events': {
-      const { events, messages } = await runPattern(await readCode(args[0]), cyclesOf(values.cycles, 1), language(args[0]));
+      const { from, cycles } = windowOf(1);
+      const { events, messages } = await runPattern(await readCode(args[0]), cycles, language(args[0]), from);
       for (const message of messages) console.error(`strudel: ${message}`);
       print(events, () => events.map((e) => e.show).join('\n'));
       return 0;
@@ -159,25 +193,32 @@ async function main(argv: string[]): Promise<number> {
       if (!Number.isInteger(sampleRate) || sampleRate < 8000 || sampleRate > 192000) {
         throw new UsageError(`--sample-rate must be a whole number of Hz from 8000 to 192000, got "${values['sample-rate']}"`);
       }
-      const rendered = await renderCode(await readCode(args[0]), {
-        cycles: cyclesOf(values.cycles, 4),
-        tail,
-        sampleRate,
-        language: language(args[0]),
-      });
+      const options = { ...windowOf(4), tail, sampleRate, language: language(args[0]) };
+      const code = await readCode(args[0]);
+      const { mix, layers } = values.layers ? await renderLayers(code, options, sections) : { mix: await renderCode(code, options), layers: undefined };
       const file = values.out ?? 'render.wav';
       await mkdir(dirname(file), { recursive: true });
-      await writeFile(file, encodeWav(rendered.channels, rendered.sampleRate));
-      const report = reportRender(rendered, relative(process.cwd(), file) || file);
-      print(report, () => formatReport(report));
+      await writeFile(file, encodeWav(mix.channels, mix.sampleRate));
+      const report = reportRender(mix, relative(process.cwd(), file) || file, sections);
+      print(layers ? { ...report, layers } : report, () => (layers ? `${formatReport(report)}\n${formatLayers(layers, report)}` : formatReport(report)));
       return report.errors.length ? 1 : 0;
     }
     case 'analyse': {
       if (!args[0]) throw new UsageError('analyse needs a WAV file');
+      const cps = values.cps === undefined ? undefined : Number(values.cps);
+      if (sections && !(cps! > 0)) throw new UsageError('--sections needs --cps, the tempo in cycles per second, to find the sections in the audio');
       const { channels, sampleRate } = decodeWav(await readFile(args[0]));
       const stats = analyse(channels, sampleRate);
       const onsets = detectOnsets(channels, sampleRate);
-      print({ stats, onsets }, () => `${formatStats(stats)}\nOnsets: ${onsets.length} detected`);
+      const bySection = sections ? sectionStats(channels, sampleRate, cps!, 0, sections) : undefined;
+      print({ stats, onsets, ...(bySection ? { sections: bySection } : {}) }, () =>
+        [formatStats(stats, cps === undefined ? undefined : stats.peakAt * cps), `Onsets: ${onsets.length} detected`, ...(bySection ? [formatSections(bySection)] : [])].join('\n'),
+      );
+      return 0;
+    }
+    case 'form': {
+      const form = await formOf(await readCode(args[0]), windowOf(8).cycles, language(args[0]), sections);
+      print(form, () => formatForm(form));
       return 0;
     }
     case 'mcp': {

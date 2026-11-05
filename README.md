@@ -54,21 +54,24 @@ Any other MCP client: run `kynska mcp` as a stdio server.
 Code is read from a file, or from stdin when the file is `-` or omitted. It is
 JavaScript, which can use ``mondo`...` `` and (after `await initTidal()`)
 ``tidal`...` `` inline; `--mondo` or a `.mondo` file reads it as Mondo notation
-throughout. Every command takes `--json`.
+throughout. Every command takes `--json`. Sections are lengths in cycles, in order, as
+`arrange()` takes them: `--sections intro=4,A=16,B=12,outro=8`; given alone, they set
+how many cycles to render or list.
 
 | Command | What it does |
 |---|---|
 | `events [file] [--cycles N]` | The events a pattern produces in the first N cycles (default 1) |
 | `check [file] [--cycles N]` | Syntax, unknown functions and methods (with suggestions), undocumented and browser-only functions, evaluation and query errors, Strudel's own warnings, silence (default 4 cycles) |
 | `diff <before> <after> [--cycles N]` | What changed between the events of two versions: changed, removed, added |
-| `render [file] [--cycles N] [--out file.wav] [--tail S] [--sample-rate R]` | Renders N cycles (default 4) to a 16-bit WAV (default `./render.wav`) and reports level, loudness (LUFS), clipping, silence, and onsets against the pattern's events |
-| `analyse <file.wav>` | The same measurements for any WAV file |
+| `form [file] [--cycles N] [--sections S]` | Which layer (`$:` or named label) plays which sounds in which cycles; with sections, events per layer per section and the note names each section uses |
+| `render [file] [--cycles N \| --from A --to B] [--sections S] [--layers] [--out file.wav] [--tail S] [--sample-rate R]` | Renders N cycles (default 4), or cycles A to B, to a 16-bit WAV (default `./render.wav`) and reports level (and the cycle of the peak), loudness (LUFS), clipping, silence, and onsets against the pattern's events; `--sections` adds them per section, `--layers` renders each layer alone and measures it beside the mix |
+| `analyse <file.wav> [--sections S --cps C]` | The same measurements for any WAV file |
 | `lookup <name>` | A function's reference entry: how to call it, parameters, examples, source; finds synonyms and full JSDoc names, and suggests names for typos |
 | `lookup --tag <tag>` / `--module <module>` / `--tags` | Functions by tag or source module; the tags |
 | `docs build` / `docs path` | Build everything in `out/` (below) / print where it is |
 | `reference build` | Build `out/reference.json` only |
 | `upstream` | Compare the pinned Strudel with its latest release and `main` |
-| `mcp` | Serve `check`, `events`, `diff`, `lookup`, `render` and `docs_path` as MCP tools over stdio |
+| `mcp` | Serve `check`, `events`, `diff`, `form`, `lookup`, `render` and `docs_path` as MCP tools over stdio |
 
 Exit codes: 0 success; 1 errors found (`check`), a difference (`diff`), an event
 that failed to play (`render`, e.g. an unknown sound) or a failure; 2 bad usage.
@@ -92,7 +95,12 @@ translation is left out too.
 `render` runs superdough, Strudel's audio engine, offline in Node through
 [node-web-audio-api](https://github.com/ircam-ismm/node-web-audio-api), the same
 way strudel.cc's "export" does. Each render runs in its own worker thread and is
-capped at 600 seconds of audio.
+capped at 600 seconds of audio. A render takes about three quarters of the audio's
+length (a 2-minute piece, about 90 s), so `--from`/`--to` drafts one section, and
+`--layers` renders up to three layers at once.
+
+- **Layers**: each `$:` or named label (`bass:`) is a layer. `--layers` renders each
+  one alone by muting the others' labels, the way `_$:` does by hand.
 
 - **Sounds**: strudel.cc's default sample banks, and General MIDI soundfont
   instruments (`gm_*`), downloaded on first use and cached in `.cache/sounds/`.
@@ -101,7 +109,9 @@ capped at 600 seconds of audio.
 - **Onsets**: detected by spectral flux and matched to the pattern's event times
   within 40 ms. On the scoring set (`node scripts/score-onsets.ts`) it finds
   every onset with 2 false onsets in 12 patterns. Slow-attack sounds (flute,
-  strings, pads) can show missing onsets.
+  strings, pads) can show missing onsets. In a dense mix, reverb, delay, noise and
+  overlapping layers read as onsets too; when most detected onsets have no event,
+  the report says they were not checked, and `--layers` checks each layer instead.
 
 ### Notations
 

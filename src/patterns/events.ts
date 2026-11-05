@@ -23,11 +23,12 @@ type Hap = {
   show(compact?: boolean): string;
 };
 
-/** The events that start within the first `cycles` cycles of `pattern`. */
-export function eventsOf(pattern: any, cycles = 1): PatternEvent[] {
+/** The events that start within `cycles` cycles of `pattern`, from cycle `from`. */
+export function eventsOf(pattern: any, cycles = 1, from = 0): PatternEvent[] {
   if (!(cycles > 0)) throw new RangeError(`cycles must be positive, got ${cycles}`);
+  if (!(from >= 0)) throw new RangeError(`from must be zero or more, got ${from}`);
   if (!pattern?.queryArc) throw new Error('The code did not evaluate to a pattern.');
-  const haps: Hap[] = pattern.sortHapsByPart().queryArc(0, cycles);
+  const haps: Hap[] = pattern.sortHapsByPart().queryArc(from, from + cycles);
   // Keep only events that start inside the window, so an event spanning the
   // window's edge is counted once.
   return haps
@@ -49,11 +50,11 @@ export type PatternRun = {
 };
 
 /** Evaluates the code and lists its events, with Strudel's warnings collected. Throws on errors. */
-export async function runPattern(code: string, cycles = 1, language: Language = 'js'): Promise<PatternRun> {
+export async function runPattern(code: string, cycles = 1, language: Language = 'js', from = 0): Promise<PatternRun> {
   if (!(cycles > 0)) throw new RangeError(`cycles must be positive, got ${cycles}`);
   const { pattern, error, cps, logs } = await evaluateCode(code, language);
   if (error) throw error;
-  const events = await captureConsole(logs, async () => eventsOf(pattern, cycles));
+  const events = await captureConsole(logs, async () => eventsOf(pattern, cycles, from));
   return { events, cps, messages: engineMessages(logs) };
 }
 
