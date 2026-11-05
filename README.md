@@ -178,7 +178,7 @@ tools against Strudel's own material (CI runs all of them):
 - **produce** (6): 8–16 bar production briefs, scored from the rendered audio
   and events: tempo, duration, loudness, peaks, clipping, section entrances,
   key, bass range, layer count and loudness contrast between sections. Known
-  solutions use cached Roland TR-909 drums and built-in synths.
+  solutions use Roland TR-909 drums and built-in synths.
 
 ```bash
 KYNSKA_EVAL_BASE_URL=https://api.example.com/v1 KYNSKA_EVAL_API_KEY=... npm run evals -- --model <model>
@@ -197,9 +197,11 @@ caps concurrent jobs (default 4); jobs that can render run at most two at once,
 with each job's layer renders performed one at a time.
 
 The baseline has no tools and returns code. The Kynska agent can draft renders,
-measure sections and layers, use `form`, and master audio. Eval renders use only
-cached sounds, write WAVs in temporary directories and remove them after the
-run; each render is capped at 32 seconds including tails. Production answers
+measure sections and layers, use `form`, and master audio. Eval renders download
+and cache sounds like the CLI does (set `KYNSKA_EVAL_OFFLINE=1` to use only
+cached sounds on a machine with no network), write WAVs in temporary directories
+and remove them after the run; each render is capped at 32 seconds including
+tails. Production answers
 from both conditions get the same final render, with mastering applied only
 when the brief asks for it. Evaluation errors and unplayable sounds score zero.
 The oracle uses known solutions without model or network calls and exits with

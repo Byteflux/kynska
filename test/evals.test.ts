@@ -6,7 +6,7 @@ import type { PatternEvent } from '../src/patterns/events.ts';
 import { ReferenceIndex } from '../src/reference/lookup.ts';
 import { smallReference } from './fixtures.ts';
 import { produceTasks, productionCriteria as c, type ProduceCriterion, type ProductionRun } from '../evals/produce.ts';
-import { emptyCosts, evalRender, withRenderSlot } from '../evals/render.ts';
+import { emptyCosts, evalRender, offlineRenders, withRenderSlot } from '../evals/render.ts';
 import { summarize, type Row } from '../evals/summary.ts';
 import { reportRender } from '../src/audio/report.ts';
 import { access } from 'node:fs/promises';
@@ -141,6 +141,14 @@ describe('production criteria', () => {
 });
 
 describe('produce tasks', () => {
+  // Regression: eval renders were always offline, so a fresh checkout or CI
+  // runner with no sound cache rendered the drum briefs silent and scored 0.
+  it('renders may download sounds unless KYNSKA_EVAL_OFFLINE=1', () => {
+    expect(offlineRenders({})).toBe(false);
+    expect(offlineRenders({ KYNSKA_EVAL_OFFLINE: '0' })).toBe(false);
+    expect(offlineRenders({ KYNSKA_EVAL_OFFLINE: '1' })).toBe(true);
+  });
+
   it.each(produceTasks.map((t) => [t.id, t] as const))('%s: oracle meets every criterion', async (_, task) => {
     const costs = emptyCosts();
     expect(await scoreTask(task, task.solution, costs)).toMatchObject({ score: 1 });

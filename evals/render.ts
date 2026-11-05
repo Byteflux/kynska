@@ -13,6 +13,13 @@ export type RenderCosts = { renderCalls: number; renderSeconds: number };
 export const emptyCosts = (): RenderCosts => ({ renderCalls: 0, renderSeconds: 0 });
 export type EvalRenderOptions = { cycles?: number; sections?: string; from?: number; to?: number; layers?: boolean; master?: number; tail?: number; sampleRate?: number };
 
+/**
+ * Eval renders download and cache sounds like the CLI does, so a fresh checkout
+ * or CI runner works. KYNSKA_EVAL_OFFLINE=1 uses only cached sounds, for a
+ * machine with no network.
+ */
+export const offlineRenders = (env: NodeJS.ProcessEnv = process.env) => env.KYNSKA_EVAL_OFFLINE === '1';
+
 // Also covers render calls made on non-produce tasks. Layer workers run serially
 // inside each job, so at most two render workers exist across the eval process.
 let active = 0;
@@ -36,7 +43,7 @@ export async function evalRender(code: string, args: EvalRenderOptions, costs = 
     const sampleRate = args.sampleRate ?? 48000;
     if (!Number.isInteger(sampleRate) || sampleRate < 8000 || sampleRate > 192000) throw new Error('sampleRate must be a whole number from 8000 to 192000');
     if (args.master !== undefined && (!Number.isFinite(args.master) || args.master >= 0)) throw new Error('master must be a negative LUFS target, e.g. -14');
-    const options = { ...windowOf(args, 4, sections), tail: args.tail ?? 0, sampleRate, maxSeconds: 32, timeout: 60, offline: true };
+    const options = { ...windowOf(args, 4, sections), tail: args.tail ?? 0, sampleRate, maxSeconds: 32, timeout: 60, offline: offlineRenders() };
     const rendered = args.layers ? await renderLayers(code, options, sections, 1) : { mix: await renderCode(code, options), layers: undefined };
     // Audio seconds actually rendered, including the mix and each solo render.
     costs.renderSeconds += (rendered.mix.channels[0].length / sampleRate) * (1 + (rendered.layers?.length ?? 0));
