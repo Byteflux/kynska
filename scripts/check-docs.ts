@@ -1,4 +1,4 @@
-// Runs `kynska check` on every js code block in the generated docs pages
+// Runs `kynska check` on every js and mondo code block in the generated docs pages
 // (out/docs, after `kynska docs build`). The blocks are Strudel's own examples,
 // so errors point at the docs conversion or at false positives in check.
 import { readdir, readFile } from 'node:fs/promises';
@@ -47,14 +47,14 @@ for (const file of await markdownFiles(docs)) {
   const page = relative(docs, file);
   if (skip.has(page)) continue;
   const text = await readFile(file, 'utf8');
-  for (const match of text.matchAll(/^```js\n([\s\S]*?)^```$/gm)) {
+  for (const [, lang, block] of text.matchAll(/^```(js|mondo)\n([\s\S]*?)^```$/gm)) {
     total++;
-    const result = await checkCode(match[1], { reference, cycles: 2 });
-    const exception = expected(page, match[1]);
+    const result = await checkCode(block, { reference, cycles: 2, language: lang === 'mondo' ? 'mondo' : 'js' });
+    const exception = expected(page, block);
     for (const d of result.diagnostics) {
       if (d.severity === 'warning') warnings[d.code] = (warnings[d.code] ?? 0) + 1;
       else if (exception) known[`${page}: ${exception.reason}`] = (known[`${page}: ${exception.reason}`] ?? 0) + 1;
-      else failures.push(`${page}: [${d.code}] ${d.message}${d.suggestions ? ` (did you mean ${d.suggestions.join(', ')}?)` : ''}\n    ${match[1].trim().split('\n')[0].slice(0, 100)}`);
+      else failures.push(`${page}: [${d.code}] ${d.message}${d.suggestions ? ` (did you mean ${d.suggestions.join(', ')}?)` : ''}\n    ${block.trim().split('\n')[0].slice(0, 100)}`);
     }
   }
 }

@@ -10,8 +10,8 @@ import { attachContext, ensureAudio } from './engine.ts';
 import type { RenderOptions, Rendered } from './render.ts';
 
 async function render(code: string, options: Required<RenderOptions>): Promise<Rendered> {
-  const { cycles, sampleRate, tail } = options;
-  const { pattern, cps, error } = await evaluateCode(code);
+  const { cycles, sampleRate, tail, language } = options;
+  const { pattern, cps, error } = await evaluateCode(code, language);
   if (error) throw error;
   const seconds = cycles / cps + tail;
   if (seconds > options.maxSeconds) {

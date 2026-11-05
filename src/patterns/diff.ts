@@ -1,5 +1,6 @@
 // Compares the events two versions of a pattern produce, to confirm a change did
 // what it meant to and nothing else.
+import type { Language } from './evaluate.ts';
 import { queryEvents, type PatternEvent } from './events.ts';
 
 export type EventChange = { before: PatternEvent; after: PatternEvent };
@@ -63,8 +64,8 @@ export function diffEvents(before: PatternEvent[], after: PatternEvent[]): Event
   return { same: !changed.length && !removed.length && !added.length, changed, removed, added, unchanged };
 }
 
-export async function diffCode(before: string, after: string, cycles = 1): Promise<EventDiff> {
-  return diffEvents(await queryEvents(before, cycles), await queryEvents(after, cycles));
+export async function diffCode(before: string, after: string, cycles = 1, language: Language = 'js'): Promise<EventDiff> {
+  return diffEvents(await queryEvents(before, cycles, language), await queryEvents(after, cycles, language));
 }
 
 const valueText = (e: PatternEvent) => e.show.replace(/^\[ [^|]*\| /, '').replace(/ \]$/, '');

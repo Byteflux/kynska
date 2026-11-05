@@ -21,12 +21,14 @@
   "dependencies": {
     "@strudel/core": "1.2.6",
     "@strudel/mini": "1.2.6",
+    "@strudel/mondo": "1.1.6",
     "@strudel/tonal": "1.2.6",
     "@strudel/transpiler": "1.2.6",
     "@strudel/xen": "1.2.6",
     "acorn": "8.19.0",
     "acorn-walk": "8.3.5",
     "jsdoc": "4.0.5",
+    "mondolang": "1.1.2",
     "node-web-audio-api": "2.2.0",
     "remark-frontmatter": "5.0.0",
     "remark-gfm": "4.0.1",
@@ -34,7 +36,8 @@
     "remark-parse": "11.0.0",
     "remark-stringify": "11.0.0",
     "superdough": "1.2.6",
-    "unified": "11.0.5"
+    "unified": "11.0.5",
+    "web-tree-sitter": "0.24.7"
   },
   "devDependencies": {
     "@types/mdast": "^4.0.4",

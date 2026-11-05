@@ -7,8 +7,16 @@ import { dirname, join, resolve } from 'node:path';
 import { parse, type Node } from 'acorn';
 import { simple } from 'acorn-walk';
 
-/** Packages Kynska loads headlessly (see src/patterns/scope.ts). */
-export const HEADLESS_PACKAGES = new Set(['@strudel/core', '@strudel/mini', '@strudel/tonal', '@strudel/xen', '@strudel/transpiler']);
+/** Packages Kynska loads headlessly (see src/patterns/scope.ts and tidal.ts). */
+export const HEADLESS_PACKAGES = new Set([
+  '@strudel/core',
+  '@strudel/mini',
+  '@strudel/tonal',
+  '@strudel/xen',
+  '@strudel/transpiler',
+  '@strudel/mondo',
+  '@strudel/tidal',
+]);
 
 type AnyNode = Node & Record<string, any>;
 

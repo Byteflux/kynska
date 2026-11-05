@@ -10,6 +10,7 @@ import { buildDocs, formatDocsResult } from './docs/build.ts';
 import { OUT_DIR, ROOT } from './paths.ts';
 import { checkCode, type Diagnostic } from './patterns/check.ts';
 import { diffCode, formatDiff } from './patterns/diff.ts';
+import { languageOf, type Language } from './patterns/evaluate.ts';
 import { runPattern } from './patterns/events.ts';
 import { buildReference } from './reference/build.ts';
 import { formatEntry, loadReference, MissingReferenceError, ReferenceIndex } from './reference/lookup.ts';
@@ -35,7 +36,9 @@ Commands:
   docs build                              Build out/reference.json, the docs pages, llms.txt and llms-full.txt
   upstream                                Compare the pinned Strudel with its latest release and main
 
-Code is read from a file, or from stdin when the file is "-" or omitted.
+Code is read from a file, or from stdin when the file is "-" or omitted. It is JavaScript,
+which can use mondo\`...\` and tidal\`...\` inline; --mondo (or a .mondo file) reads it as
+Mondo notation throughout.
 Exit codes: 0 success; 1 errors found (check), a difference (diff), an event that failed to
 play (render) or failure; 2 bad usage.`;
 
@@ -83,6 +86,7 @@ async function main(argv: string[]): Promise<number> {
       json: { type: 'boolean', default: false },
       tag: { type: 'string' },
       tags: { type: 'boolean', default: false },
+      mondo: { type: 'boolean', default: false },
       module: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -93,10 +97,12 @@ async function main(argv: string[]): Promise<number> {
     return values.help ? 0 : 2;
   }
   const print = (value: unknown, text: () => string) => console.log(values.json ? JSON.stringify(value, null, 2) : text());
+  // Mondo notation throughout: --mondo, or a file ending in .mondo.
+  const language = (file?: string): Language => (values.mondo ? 'mondo' : languageOf(file));
 
   switch (command) {
     case 'events': {
-      const { events, messages } = await runPattern(await readCode(args[0]), cyclesOf(values.cycles, 1));
+      const { events, messages } = await runPattern(await readCode(args[0]), cyclesOf(values.cycles, 1), language(args[0]));
       for (const message of messages) console.error(`strudel: ${message}`);
       print(events, () => events.map((e) => e.show).join('\n'));
       return 0;
@@ -106,6 +112,7 @@ async function main(argv: string[]): Promise<number> {
       const result = await checkCode(await readCode(args[0]), {
         reference: await optionalReference(),
         cycles: cyclesOf(values.cycles, 4),
+        language: language(args[0]),
       });
       print(result, () => {
         const lines = result.diagnostics.map((d) => formatDiagnostic(d, file));
@@ -122,7 +129,7 @@ async function main(argv: string[]): Promise<number> {
       if (args.length !== 2) throw new UsageError('diff needs two files: <before> <after> ("-" for stdin)');
       if (args[0] === '-' && args[1] === '-') throw new UsageError('only one of the two files can be stdin');
       const cycles = cyclesOf(values.cycles, 1);
-      const diff = await diffCode(await readCode(args[0]), await readCode(args[1]), cycles);
+      const diff = await diffCode(await readCode(args[0]), await readCode(args[1]), cycles, language(args[0]));
       print(diff, () => formatDiff(diff, cycles));
       return diff.same ? 0 : 1;
     }
@@ -163,7 +170,12 @@ async function main(argv: string[]): Promise<number> {
       if (!Number.isInteger(sampleRate) || sampleRate < 8000 || sampleRate > 192000) {
         throw new UsageError(`--sample-rate must be a whole number of Hz from 8000 to 192000, got "${values['sample-rate']}"`);
       }
-      const rendered = await renderCode(await readCode(args[0]), { cycles: cyclesOf(values.cycles, 4), tail, sampleRate });
+      const rendered = await renderCode(await readCode(args[0]), {
+        cycles: cyclesOf(values.cycles, 4),
+        tail,
+        sampleRate,
+        language: language(args[0]),
+      });
       const file = values.out ?? 'render.wav';
       await mkdir(dirname(file), { recursive: true });
       await writeFile(file, encodeWav(rendered.channels, rendered.sampleRate));

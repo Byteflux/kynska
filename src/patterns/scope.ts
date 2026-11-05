@@ -3,6 +3,7 @@
 // the REPL still evaluates, and its events can be queried.
 import { registerHooks } from 'node:module';
 import { format } from 'node:util';
+import { initTidal, tidalFunction } from './tidal.ts';
 
 // @kabelsalat/web (a dependency of @strudel/core) is "type": "module" but its
 // "main" is a browser IIFE with no exports; its ES module build is only named in
@@ -91,8 +92,11 @@ export async function captureConsole<T>(logs: string[], fn: () => Promise<T>): P
   }
 }
 
-/** Creates a REPL that never plays: patterns are evaluated and stored, not scheduled. */
-export function silentRepl(scope: Pick<Scope, 'core' | 'transpiler'>, onEvalError: (error: unknown) => void) {
+/**
+ * Creates a REPL that never plays: patterns are evaluated and stored, not
+ * scheduled. With `mondo`, the whole code is Mondo notation (the REPL's Mondo mode).
+ */
+export function silentRepl(scope: Pick<Scope, 'core' | 'transpiler'>, onEvalError: (error: unknown) => void, mondo = false) {
   return scope.core.repl({
     defaultOutput: async () => {},
     getTime: () => 0,
@@ -100,6 +104,7 @@ export function silentRepl(scope: Pick<Scope, 'core' | 'transpiler'>, onEvalErro
     setInterval: () => 0,
     clearInterval: () => {},
     onEvalError,
+    mondo,
   });
 }
 
@@ -150,11 +155,12 @@ let ready: Promise<Scope> | undefined;
 export function ensureScope(): Promise<Scope> {
   ready ??= captureConsole([], async () => {
     const before = new Set(Object.getOwnPropertyNames(globalThis));
-    const [core, mini, tonal, xen, transpiler] = await Promise.all([
+    const [core, mini, tonal, xen, mondo, transpiler] = await Promise.all([
       import('@strudel/core'),
       import('@strudel/mini'),
       import('@strudel/tonal'),
       import('@strudel/xen'),
+      import('@strudel/mondo'),
       import('@strudel/transpiler'),
     ]);
     for (const name of OUTPUT_METHODS) {
@@ -175,10 +181,13 @@ export function ensureScope(): Promise<Scope> {
           return { ...v, pan: (v.pan || 1) * (position * 0.5 + 0.25) };
         });
     };
-    await core.evalScope(core, mini, tonal, xen, OUTPUT_GLOBALS, {
+    await core.evalScope(core, mini, tonal, xen, mondo, OUTPUT_GLOBALS, {
       // The transpiler rewrites slider(value, min, max) into a call to this editor
       // widget; headlessly the slider just stays at its starting value.
       sliderWithID: (_id: string, value: unknown) => core.pure(value),
+      // Tidal notation: loaded from the pinned Strudel source on first use.
+      initTidal,
+      tidal: tidalFunction,
     });
     // A first evaluation injects the REPL's own globals (setcpm, all, each, hush)
     // and pattern methods (p, d1..d9), so they count as defined from the start.

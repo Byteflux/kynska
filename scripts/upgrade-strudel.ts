@@ -2,13 +2,15 @@
 //   node scripts/upgrade-strudel.ts [version] [--tags-commit <sha>|main|none]
 // 1. checks npm has the version for every pinned package and finds the release's commit,
 // 2. writes strudel.json (tags from Strudel main unless told otherwise),
-// 3. installs the packages at exactly that version,
+// 3. installs the packages at exactly that version (and Mondo's at the versions that release uses),
 // 4. rebuilds the docs and runs the type check, the tests and the three sweeps.
 // It leaves the changes in place for review, and exits 1 if any step failed.
 import { spawn } from 'node:child_process';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { PIN_FILE, ROOT } from '../src/paths.ts';
+import { fetchCommit } from '../src/reference/build.ts';
 import { readPin } from '../src/reference/pin.ts';
 import { hasVersion, latestVersion, mainCommit, PINNED_PACKAGES, releaseCommit } from '../src/reference/upstream.ts';
 
@@ -40,6 +42,17 @@ if (!commit) {
   console.error(`No tag @strudel/core@${version} in ${pin.repository}. Not upgrading.`);
   process.exit(1);
 }
+// Mondo's packages carry their own version numbers; take them from the release's source.
+const source = await fetchCommit(pin.repository, commit);
+const mondoPackages: string[] = [];
+for (const dir of ['mondough', 'mondo']) {
+  const { name, version: v } = JSON.parse(await readFile(join(source, 'packages', dir, 'package.json'), 'utf8')) as { name: string; version: string };
+  if (!(await hasVersion(name, v))) {
+    console.error(`npm has no ${name}@${v}, which Strudel ${version} uses. Not upgrading.`);
+    process.exit(1);
+  }
+  mondoPackages.push(`${name}@${v}`);
+}
 const tagsOption = values['tags-commit']!;
 const tagsCommit = tagsOption === 'none' ? undefined : tagsOption === 'main' ? await mainCommit(pin.repository) : tagsOption;
 console.log(`release commit ${commit}${tagsCommit ? `, tags from ${tagsCommit}` : ''}`);
@@ -48,8 +61,9 @@ step(2, 'strudel.json');
 const next = { version, repository: pin.repository, tag: `@strudel/core@${version}`, commit, ...(tagsCommit ? { tagsCommit } : {}) };
 await writeFile(PIN_FILE, `${JSON.stringify(next, null, 2)}\n`);
 
-step(3, `npm install ${PINNED_PACKAGES.map((p) => `${p}@${version}`).join(' ')}`);
-if ((await run('npm', ['install', '--save-exact', ...PINNED_PACKAGES.map((p) => `${p}@${version}`)])) !== 0) {
+const installs = [...PINNED_PACKAGES.map((p) => `${p}@${version}`), ...mondoPackages];
+step(3, `npm install ${installs.join(' ')}`);
+if ((await run('npm', ['install', '--save-exact', ...installs])) !== 0) {
   console.error('npm install failed; strudel.json is updated, package.json may not be.');
   process.exit(1);
 }

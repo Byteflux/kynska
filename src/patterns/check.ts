@@ -5,7 +5,7 @@ import { parse, type Node } from 'acorn';
 import { full, simple } from 'acorn-walk';
 import type { ReferenceIndex } from '../reference/lookup.ts';
 import { suggest } from '../text/suggest.ts';
-import { evaluateCode } from './evaluate.ts';
+import { evaluateCode, type Language } from './evaluate.ts';
 import { eventsOf } from './events.ts';
 import {
   captureConsole,
@@ -50,6 +50,8 @@ export type CheckOptions = {
   reference?: ReferenceIndex;
   /** Cycles to query for runtime errors and silence. Default 4. */
   cycles?: number;
+  /** 'mondo' for code written entirely in Mondo notation. Default 'js'. */
+  language?: Language;
 };
 
 type AnyNode = Node & Record<string, any>;
@@ -152,7 +154,7 @@ function at(node: AnyNode): Pick<Diagnostic, 'line' | 'column'> {
 }
 
 export async function checkCode(code: string, options: CheckOptions = {}): Promise<CheckResult> {
-  const { reference, cycles = 4 } = options;
+  const { reference, cycles = 4, language = 'js' } = options;
   const diagnostics: Diagnostic[] = [];
   const done = (extra: Partial<CheckResult> = {}): CheckResult => ({
     ok: !diagnostics.some((d) => d.severity === 'error'),
@@ -167,6 +169,52 @@ export async function checkCode(code: string, options: CheckOptions = {}): Promi
       message: 'No Strudel reference loaded, so undocumented functions are not reported. Build it with: kynska reference build',
     });
   }
+
+  // Steps 3 and 4, after the static checks (or alone, for Mondo notation).
+  const runtime = async (browserOnly: ReadonlyMap<string, unknown>): Promise<CheckResult> => {
+    // 3. Evaluate the way the REPL does.
+    const evaluation = await evaluateCode(code, language);
+    if (evaluation.error) {
+      if (browserOnly.size) {
+        // A stand-in cannot behave like the real thing (midikeys() returns a
+        // function in the browser), so the failure is most likely ours, not the code's.
+        const names = [...browserOnly.keys()].map((n) => `\`${n}\``).join(', ');
+        diagnostics.push({
+          severity: 'warning',
+          code: 'browser-only',
+          message: `Could not evaluate headlessly, most likely because of browser-only ${names}: ${evaluation.error.message}. The rest of the code was checked for names only.`,
+        });
+      } else {
+        diagnostics.push({ severity: 'error', code: 'evaluation', message: evaluation.error.message });
+      }
+      return done({ cps: evaluation.cps });
+    }
+    // 4. Query: some errors only appear when events are computed.
+    let events: number;
+    try {
+      events = (await captureConsole(evaluation.logs, async () => eventsOf(evaluation.pattern, cycles))).length;
+    } catch (error) {
+      diagnostics.push({ severity: 'error', code: 'query', message: (error as Error).message });
+      return done({ cps: evaluation.cps });
+    }
+    // Strudel warns about some mistakes instead of failing, e.g. arithmetic on a
+    // control pattern, which leaves it unchanged.
+    for (const message of engineMessages(evaluation.logs)) {
+      diagnostics.push({ severity: 'warning', code: 'engine-warning', message: message.replace(/^\[warn\]:?\s*/, '') });
+    }
+    // Stand-ins are silent, so silence says nothing when they are in use.
+    if (events === 0 && !browserOnly.size) {
+      diagnostics.push({
+        severity: 'warning',
+        code: 'silent',
+        message: `The pattern produces no events in the first ${cycles} cycle${cycles === 1 ? '' : 's'}.`,
+      });
+    }
+    return done({ events, cps: evaluation.cps });
+  };
+
+  // Mondo notation is not JavaScript: no syntax or name checks, just run it.
+  if (language === 'mondo') return runtime(new Map());
 
   // 1. Syntax.
   let ast: Node;
@@ -326,44 +374,5 @@ export async function checkCode(code: string, options: CheckOptions = {}): Promi
   if (diagnostics.some((d) => d.severity === 'error')) return done();
   for (const [name, as] of browserOnly) await stubBrowserOnly(name, as);
 
-  // 3. Evaluate the way the REPL does.
-  const evaluation = await evaluateCode(code);
-  if (evaluation.error) {
-    if (browserOnly.size) {
-      // A stand-in cannot behave like the real thing (midikeys() returns a
-      // function in the browser), so the failure is most likely ours, not the code's.
-      const names = [...browserOnly.keys()].map((n) => `\`${n}\``).join(', ');
-      diagnostics.push({
-        severity: 'warning',
-        code: 'browser-only',
-        message: `Could not evaluate headlessly, most likely because of browser-only ${names}: ${evaluation.error.message}. The rest of the code was checked for names only.`,
-      });
-    } else {
-      diagnostics.push({ severity: 'error', code: 'evaluation', message: evaluation.error.message });
-    }
-    return done({ cps: evaluation.cps });
-  }
-
-  // 4. Query: some errors only appear when events are computed.
-  let events: number;
-  try {
-    events = (await captureConsole(evaluation.logs, async () => eventsOf(evaluation.pattern, cycles))).length;
-  } catch (error) {
-    diagnostics.push({ severity: 'error', code: 'query', message: (error as Error).message });
-    return done({ cps: evaluation.cps });
-  }
-  // Strudel warns about some mistakes instead of failing, e.g. arithmetic on a
-  // control pattern, which leaves it unchanged.
-  for (const message of engineMessages(evaluation.logs)) {
-    diagnostics.push({ severity: 'warning', code: 'engine-warning', message: message.replace(/^\[warn\]:?\s*/, '') });
-  }
-  // Stand-ins are silent, so silence says nothing when they are in use.
-  if (events === 0 && !browserOnly.size) {
-    diagnostics.push({
-      severity: 'warning',
-      code: 'silent',
-      message: `The pattern produces no events in the first ${cycles} cycle${cycles === 1 ? '' : 's'}.`,
-    });
-  }
-  return done({ events, cps: evaluation.cps });
+  return runtime(browserOnly);
 }

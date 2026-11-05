@@ -4,4 +4,6 @@ declare module '@strudel/mini';
 declare module '@strudel/tonal';
 declare module '@strudel/transpiler';
 declare module '@strudel/xen';
+declare module '@strudel/mondo';
+declare module 'web-tree-sitter';
 declare module 'superdough';

@@ -1,6 +1,6 @@
 // Lists the events (haps) a Strudel pattern produces. This is how an agent checks
 // a pattern without listening to it.
-import { evaluateCode } from './evaluate.ts';
+import { evaluateCode, type Language } from './evaluate.ts';
 import { captureConsole, engineMessages } from './scope.ts';
 
 export type PatternEvent = {
@@ -49,14 +49,14 @@ export type PatternRun = {
 };
 
 /** Evaluates the code and lists its events, with Strudel's warnings collected. Throws on errors. */
-export async function runPattern(code: string, cycles = 1): Promise<PatternRun> {
+export async function runPattern(code: string, cycles = 1, language: Language = 'js'): Promise<PatternRun> {
   if (!(cycles > 0)) throw new RangeError(`cycles must be positive, got ${cycles}`);
-  const { pattern, error, cps, logs } = await evaluateCode(code);
+  const { pattern, error, cps, logs } = await evaluateCode(code, language);
   if (error) throw error;
   const events = await captureConsole(logs, async () => eventsOf(pattern, cycles));
   return { events, cps, messages: engineMessages(logs) };
 }
 
-export async function queryEvents(code: string, cycles = 1): Promise<PatternEvent[]> {
-  return (await runPattern(code, cycles)).events;
+export async function queryEvents(code: string, cycles = 1, language: Language = 'js'): Promise<PatternEvent[]> {
+  return (await runPattern(code, cycles, language)).events;
 }

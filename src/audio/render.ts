@@ -2,6 +2,7 @@
 // event in onset order through superdough, then one offline render. Each render
 // runs in its own worker thread (see render-worker.ts).
 import { Worker } from 'node:worker_threads';
+import type { Language } from '../patterns/evaluate.ts';
 import type { PatternEvent } from '../patterns/events.ts';
 
 export type RenderOptions = {
@@ -15,6 +16,8 @@ export type RenderOptions = {
   maxSeconds?: number;
   /** Give up after this many seconds of wall time. Default 120. */
   timeout?: number;
+  /** 'mondo' for code written entirely in Mondo notation. Default 'js'. */
+  language?: Language;
 };
 
 export type Rendered = {
@@ -34,7 +37,7 @@ export type Rendered = {
 
 /** Evaluates Strudel code the way the REPL does and renders it. Throws on evaluation errors. */
 export function renderCode(code: string, options: RenderOptions = {}): Promise<Rendered> {
-  const settings: Required<RenderOptions> = { cycles: 4, sampleRate: 48000, tail: 0, maxSeconds: 600, timeout: 120, ...options };
+  const settings: Required<RenderOptions> = { cycles: 4, sampleRate: 48000, tail: 0, maxSeconds: 600, timeout: 120, language: 'js', ...options };
   if (!(settings.cycles > 0)) return Promise.reject(new RangeError(`cycles must be positive, got ${settings.cycles}`));
   if (!(settings.tail >= 0)) return Promise.reject(new RangeError(`tail must be zero or more, got ${settings.tail}`));
   return new Promise((resolve, reject) => {
