@@ -1,4 +1,7 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { cachingFetch } from '../src/audio/engine.ts';
 import { analyse, detectOnsets, loudness, matchOnsets } from '../src/audio/analyse.ts';
 import { renderCode } from '../src/audio/render.ts';
 import { reportRender } from '../src/audio/report.ts';
@@ -26,6 +29,44 @@ function plucks(seconds: number, starts: number[]): Float32Array {
 }
 
 const db = (x: number) => 20 * Math.log10(x);
+
+describe('sound downloads', () => {
+  it('names the URL and the cause when a download fails, not a bare "fetch failed"', async () => {
+    const dead = (async () => {
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND strudel.b-cdn.net'), { code: 'ENOTFOUND' }) });
+    }) as typeof fetch;
+    const fetchSound = cachingFetch(dead, join(tmpdir(), `kynska-sounds-${process.pid}-a`), 1);
+    await expect(fetchSound('https://strudel.b-cdn.net/piano/c4.mp3')).rejects.toThrow(
+      /could not download https:\/\/strudel\.b-cdn\.net\/piano\/c4\.mp3: getaddrinfo ENOTFOUND.*after 3 attempts/,
+    );
+  });
+
+  it('retries a transient DNS failure instead of sinking the render', async () => {
+    let calls = 0;
+    const flaky = (async () => {
+      if (++calls < 3) throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo EAI_AGAIN strudel.b-cdn.net'), { code: 'EAI_AGAIN' }) });
+      return new Response('sample');
+    }) as typeof fetch;
+    const dir = join(tmpdir(), `kynska-sounds-${process.pid}-b`);
+    const fetchSound = cachingFetch(flaky, dir, 1);
+    expect(await (await fetchSound('https://strudel.b-cdn.net/piano/Ds2v8.mp3')).text()).toBe('sample');
+    expect(calls).toBe(3);
+    // and the sample is cached, so the next render does not download it again
+    expect(await (await fetchSound('https://strudel.b-cdn.net/piano/Ds2v8.mp3')).text()).toBe('sample');
+    expect(calls).toBe(3);
+  });
+
+  it('does not retry a timeout', async () => {
+    let calls = 0;
+    const slow = (async () => {
+      calls++;
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    }) as typeof fetch;
+    const fetchSound = cachingFetch(slow, join(tmpdir(), `kynska-sounds-${process.pid}-c`), 1);
+    await expect(fetchSound('https://strudel.b-cdn.net/piano/c4.mp3')).rejects.toThrow(/could not download.*after 1 attempt\b/);
+    expect(calls).toBe(1);
+  });
+});
 
 describe('WAV', () => {
   it('round-trips 16-bit stereo audio', () => {

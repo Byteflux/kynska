@@ -31,8 +31,11 @@ export type AudioEngine = {
  * Caches GET requests for sample maps and samples under .cache/sounds/, so a
  * sound is downloaded once and later renders work offline.
  */
-function cachingFetch(original: typeof fetch): typeof fetch {
-  const dir = join(CACHE_DIR, 'sounds');
+const DOWNLOAD_ATTEMPTS = 3;
+/** Network errors that usually pass on a second try. */
+const TRANSIENT = /^(EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT)$/;
+
+export function cachingFetch(original: typeof fetch, dir = join(CACHE_DIR, 'sounds'), retryDelayMs = 300): typeof fetch {
   return async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (!/^https?:\/\//.test(url) || (init?.method && init.method !== 'GET')) return original(input, init);
@@ -53,7 +56,22 @@ function cachingFetch(original: typeof fetch): typeof fetch {
     }
     if (cached) return new Response(new Uint8Array(guard(cached)));
     // A dead network must not hang a render: give up on a download after 20 s.
-    const response = await original(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(20_000) });
+    let response: Response | undefined;
+    for (let attempt = 1; !response; attempt++) {
+      try {
+        response = await original(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(20_000) });
+      } catch (e) {
+        // undici's bare "fetch failed" names neither the file nor the reason.
+        const reason = (e as Error & { cause?: Error & { code?: string } }).cause ?? (e as Error);
+        // One flaky DNS lookup among the dozens of per-note downloads must not
+        // sink a render; a timeout is not retried (a dead network would cost 20 s a try).
+        if (attempt < DOWNLOAD_ATTEMPTS && TRANSIENT.test((reason as { code?: string }).code ?? '')) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+          continue;
+        }
+        throw new Error(`could not download ${url}: ${reason.message} after ${attempt} attempt${attempt > 1 ? 's' : ''} (not cached under ${dir}; check the network and re-run)`, { cause: e });
+      }
+    }
     if (!response.ok) return response;
     const body = guard(Buffer.from(await response.arrayBuffer()));
     await mkdir(dir, { recursive: true });
