@@ -1,0 +1,25 @@
+/** One documented Strudel function. */
+export type ReferenceEntry = {
+  name: string;
+  /** Other names it can be called by (Strudel's @synonyms and @alias). */
+  synonyms: string[];
+  /** Categories from Strudel's @tags. Empty for releases that predate them. */
+  tags: string[];
+  /** Where it is defined, as "<package>/<file>", e.g. "core/controls". */
+  module: string;
+  /** Markdown. */
+  description: string;
+  params: { name: string; types: string[]; description: string; optional: boolean; default?: string }[];
+  returns?: string;
+  /** Code examples, each a runnable Strudel snippet. */
+  examples: string[];
+  /** How it can be called in the running engine. */
+  callable: { global: boolean; method: boolean };
+  source: { path: string; line: number; url: string };
+};
+
+export type Reference = {
+  schema: 1;
+  strudel: { version: string; commit: string; repository: string };
+  functions: ReferenceEntry[];
+};

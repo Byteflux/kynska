@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { queryEvents } from '../src/patterns/events.ts';
+import { queryEvents, runPattern } from '../src/patterns/events.ts';
 
 const timings = (events: { begin: string; end: string }[]) => events.map((e) => [e.begin, e.end]);
+const sounds = (events: { value: unknown }[]) => events.map((e) => (e.value as { s: string }).s);
 
 describe('queryEvents', () => {
   it('splits a cycle evenly between mini-notation steps', async () => {
@@ -22,8 +23,8 @@ describe('queryEvents', () => {
 
   it('stacks layers and counts every onset over several cycles', async () => {
     const events = await queryEvents('s("bd*2, hh*4")', 2);
-    expect(events.filter((e) => (e.value as { s: string }).s === 'bd')).toHaveLength(4);
-    expect(events.filter((e) => (e.value as { s: string }).s === 'hh')).toHaveLength(8);
+    expect(sounds(events).filter((s) => s === 'bd')).toHaveLength(4);
+    expect(sounds(events).filter((s) => s === 'hh')).toHaveLength(8);
   });
 
   it('keeps chained controls on each event', async () => {
@@ -43,5 +44,44 @@ describe('queryEvents', () => {
 
   it('rejects code that calls an unknown function', async () => {
     await expect(queryEvents('nonsense("bd")')).rejects.toThrow();
+  });
+});
+
+describe('REPL semantics', () => {
+  it('plays every $: pattern together', async () => {
+    const events = await queryEvents('$: s("bd*2")\n$: s("hh*4")');
+    expect(sounds(events).sort()).toEqual(['bd', 'bd', 'hh', 'hh', 'hh', 'hh']);
+  });
+
+  it('mutes patterns labelled with a leading underscore', async () => {
+    const events = await queryEvents('$: s("bd*2")\n_$: s("cp")');
+    expect(sounds(events)).toEqual(['bd', 'bd']);
+  });
+
+  it('plays only soloed patterns when there are any', async () => {
+    const events = await queryEvents('$: s("bd*2")\nS$: s("cp")');
+    expect(sounds(events)).toEqual(['cp']);
+  });
+
+  it('keeps a slider at its starting value', async () => {
+    const [event] = await queryEvents('s("bd").gain(slider(0.5, 0, 1))');
+    expect(event.value).toEqual({ s: 'bd', gain: 0.5 });
+  });
+
+  it('applies all() to every pattern', async () => {
+    const events = await queryEvents('$: s("bd")\n$: s("hh")\nall(x => x.fast(2))');
+    expect(events).toHaveLength(4);
+  });
+});
+
+describe('runPattern', () => {
+  it('reports the tempo set with setcpm', async () => {
+    const { cps } = await runPattern('setcpm(140/4)\ns("bd")');
+    expect(cps).toBeCloseTo(140 / 4 / 60);
+  });
+
+  it("collects Strudel's warnings instead of printing them", async () => {
+    const { messages } = await runPattern('note("c3").add(12)');
+    expect(messages.join('\n')).toMatch(/arithmetic on control pattern/);
   });
 });

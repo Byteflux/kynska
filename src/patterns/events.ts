@@ -1,6 +1,7 @@
-// Evaluates Strudel code headlessly and lists the events (haps) it produces.
-// This is how an agent checks a pattern without listening to it.
-import { ensureScope } from './scope.ts';
+// Lists the events (haps) a Strudel pattern produces. This is how an agent checks
+// a pattern without listening to it.
+import { evaluateCode } from './evaluate.ts';
+import { captureConsole, engineMessages } from './scope.ts';
 
 export type PatternEvent = {
   /** Start of the event, in cycles, as an exact fraction such as "3/8". */
@@ -17,16 +18,14 @@ export type PatternEvent = {
 type Fraction = { toFraction(): string };
 type Hap = {
   whole?: { begin: Fraction; end: Fraction };
-  part: { begin: Fraction; end: Fraction };
   value: unknown;
   hasOnset(): boolean;
   show(compact?: boolean): string;
 };
 
-export async function queryEvents(code: string, cycles = 1): Promise<PatternEvent[]> {
+/** The events that start within the first `cycles` cycles of `pattern`. */
+export function eventsOf(pattern: any, cycles = 1): PatternEvent[] {
   if (!(cycles > 0)) throw new RangeError(`cycles must be positive, got ${cycles}`);
-  const { evaluate } = await ensureScope();
-  const { pattern } = await evaluate(code);
   if (!pattern?.queryArc) throw new Error('The code did not evaluate to a pattern.');
   const haps: Hap[] = pattern.sortHapsByPart().queryArc(0, cycles);
   // Keep only events that start inside the window, so an event spanning the
@@ -39,4 +38,25 @@ export async function queryEvents(code: string, cycles = 1): Promise<PatternEven
       value: hap.value,
       show: hap.show(true),
     }));
+}
+
+export type PatternRun = {
+  events: PatternEvent[];
+  /** Tempo in cycles per second. */
+  cps: number;
+  /** Warnings Strudel printed while evaluating or querying, e.g. about a no-op operation. */
+  messages: string[];
+};
+
+/** Evaluates the code and lists its events, with Strudel's warnings collected. Throws on errors. */
+export async function runPattern(code: string, cycles = 1): Promise<PatternRun> {
+  if (!(cycles > 0)) throw new RangeError(`cycles must be positive, got ${cycles}`);
+  const { pattern, error, cps, logs } = await evaluateCode(code);
+  if (error) throw error;
+  const events = await captureConsole(logs, async () => eventsOf(pattern, cycles));
+  return { events, cps, messages: engineMessages(logs) };
+}
+
+export async function queryEvents(code: string, cycles = 1): Promise<PatternEvent[]> {
+  return (await runPattern(code, cycles)).events;
 }
