@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import { analyse, detectOnsets } from './audio/analyse.ts';
 import { renderCode } from './audio/render.ts';
 import { formatLayers, renderLayers } from './audio/layers.ts';
+import { formatMaster, master } from './audio/master.ts';
 import { formatReport, formatSections, formatStats, reportRender, sectionStats } from './audio/report.ts';
 import { decodeWav, encodeWav } from './audio/wav.ts';
 import { buildDocs, formatDocsResult } from './docs/build.ts';
@@ -35,11 +36,12 @@ Commands:
   form [file] [--cycles N] [--sections S] [--json]
                                           Which layer plays which sounds in which cycles; with
                                           sections, events per section and the notes each uses
-  render [file] [--cycles N | --from A --to B] [--sections S] [--layers] [--out file.wav]
-         [--tail S] [--sample-rate R] [--json]
+  render [file] [--cycles N | --from A --to B] [--sections S] [--layers] [--master=LUFS]
+         [--out file.wav] [--tail S] [--sample-rate R] [--json]
                                           Render to a WAV file (default 4 cycles, ./render.wav)
                                           and measure it: level, loudness, clipping, silence, onsets;
-                                          --sections adds them per section, --layers per layer
+                                          --sections adds them per section, --layers per layer;
+                                          --master=-14 writes it at that loudness, peaks limited to -1 dBFS
   analyse <file.wav> [--sections S --cps C] [--json]
                                           Measure any WAV file the same way (onsets: detected count)
   reference build                         Fetch the pinned Strudel source and build out/reference.json
@@ -93,6 +95,7 @@ async function main(argv: string[]): Promise<number> {
       to: { type: 'string' },
       sections: { type: 'string' },
       layers: { type: 'boolean', default: false },
+      master: { type: 'string' },
       cps: { type: 'string' },
       out: { type: 'string' },
       tail: { type: 'string' },
@@ -195,12 +198,19 @@ async function main(argv: string[]): Promise<number> {
       }
       const options = { ...windowOf(4), tail, sampleRate, language: language(args[0]) };
       const code = await readCode(args[0]);
-      const { mix, layers } = values.layers ? await renderLayers(code, options, sections) : { mix: await renderCode(code, options), layers: undefined };
+      const target = values.master === undefined ? undefined : Number(values.master);
+      if (target !== undefined && !(target < 0)) throw new UsageError(`--master takes a loudness in LUFS, written --master=-14; got "${values.master}"`);
+      const rendered = values.layers ? await renderLayers(code, options, sections) : { mix: await renderCode(code, options), layers: undefined };
+      const { layers } = rendered;
+      const mastered = target === undefined ? undefined : master(rendered.mix.channels, rendered.mix.sampleRate, { target });
+      const mix = mastered ? { ...rendered.mix, channels: mastered.channels } : rendered.mix;
       const file = values.out ?? 'render.wav';
       await mkdir(dirname(file), { recursive: true });
       await writeFile(file, encodeWav(mix.channels, mix.sampleRate));
       const report = reportRender(mix, relative(process.cwd(), file) || file, sections);
-      print(layers ? { ...report, layers } : report, () => (layers ? `${formatReport(report)}\n${formatLayers(layers, report)}` : formatReport(report)));
+      const { channels: _, ...masterInfo } = mastered ?? { channels: undefined };
+      const text = [formatReport(report), ...(mastered ? [formatMaster(mastered)] : []), ...(layers ? [formatLayers(layers, report)] : [])].join('\n');
+      print({ ...report, ...(mastered ? { master: masterInfo } : {}), ...(layers ? { layers } : {}) }, () => text);
       return report.errors.length ? 1 : 0;
     }
     case 'analyse': {

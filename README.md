@@ -64,7 +64,7 @@ how many cycles to render or list.
 | `check [file] [--cycles N]` | Syntax, unknown functions and methods (with suggestions), undocumented and browser-only functions, evaluation and query errors, Strudel's own warnings, silence (default 4 cycles) |
 | `diff <before> <after> [--cycles N]` | What changed between the events of two versions: changed, removed, added |
 | `form [file] [--cycles N] [--sections S]` | Which layer (`$:` or named label) plays which sounds in which cycles; with sections, events per layer per section and the note names each section uses |
-| `render [file] [--cycles N \| --from A --to B] [--sections S] [--layers] [--out file.wav] [--tail S] [--sample-rate R]` | Renders N cycles (default 4), or cycles A to B, to a 16-bit WAV (default `./render.wav`) and reports level (and the cycle of the peak), loudness (LUFS), clipping, silence, and onsets against the pattern's events; `--sections` adds them per section, `--layers` renders each layer alone and measures it beside the mix |
+| `render [file] [--cycles N \| --from A --to B] [--sections S] [--layers] [--master=LUFS] [--out file.wav] [--tail S] [--sample-rate R]` | Renders N cycles (default 4), or cycles A to B, to a 16-bit WAV (default `./render.wav`) and reports level (and the cycle of the peak), loudness (LUFS), clipping, silence, and onsets against the pattern's events; `--sections` adds them per section, `--layers` renders each layer alone and measures it beside the mix, `--master=-14` writes the file mastered to that loudness |
 | `analyse <file.wav> [--sections S --cps C]` | The same measurements for any WAV file |
 | `lookup <name>` | A function's reference entry: how to call it, parameters, examples, source; finds synonyms and full JSDoc names, and suggests names for typos |
 | `lookup --tag <tag>` / `--module <module>` / `--tags` | Functions by tag or source module; the tags |
@@ -102,6 +102,11 @@ drafts one section, and
 
 - **Layers**: each `$:` or named label (`bass:`) is a layer. `--layers` renders each
   one alone by muting the others' labels, the way `_$:` does by hand.
+- **Mastering**: Strudel has no limiter on the mix (every event goes to the output
+  through its own chain), so a mix with drums cannot reach release loudness without
+  clipping. `--master=-14` writes the file at that loudness, with a lookahead limiter
+  holding peaks at -1 dBFS, and reports how much it limited. Only the file changes:
+  strudel.cc plays the code unmastered.
 
 - **Sounds**: strudel.cc's default sample banks, and General MIDI soundfont
   instruments (`gm_*`), downloaded on first use and cached in `.cache/sounds/`.

@@ -31,7 +31,7 @@ A render takes from a fifth to three quarters of the audio's length, depending o
 
 `form`, `render --layers` and `render --sections` already measure layer balance, level per section, where the peak is, which layer plays where and the notes each section uses: reach for them before writing a script of your own.
 
-Done when `check` is OK, the events match what you wrote down for every cycle, and `render` exits 0 (every sound played) with 0 clipped samples. For drums, plucks and pianos, the onset line should match every event time; slow-attack sounds (flute, strings, pads) can show missing onsets, which is the detector, not the music.
+Done when `check` is OK, the events match what you wrote down for every cycle, and `render` exits 0 (every sound played) with 0 clipped samples. A finished piece also reaches its loudness target: follow [mix.md](mix.md), which ends with `render --master=-14`. For drums, plucks and pianos, the onset line should match every event time; slow-attack sounds (flute, strings, pads) can show missing onsets, which is the detector, not the music.
 
 ## Facts that catch everyone
 

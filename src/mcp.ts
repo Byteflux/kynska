@@ -6,6 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { formatLayers, renderLayers } from './audio/layers.ts';
+import { formatMaster, master } from './audio/master.ts';
 import { renderCode } from './audio/render.ts';
 import { formatReport, reportRender } from './audio/report.ts';
 import { encodeWav } from './audio/wav.ts';
@@ -141,6 +142,11 @@ export async function serveMcp(): Promise<void> {
         to: z.number().positive().optional().describe('Render up to this cycle, instead of cycles'),
         sections,
         layers: z.boolean().optional().describe('Also render each $: or labelled layer alone and measure it'),
+        master: z
+          .number()
+          .negative()
+          .optional()
+          .describe('Write the file mastered to this loudness in LUFS (e.g. -14), peaks limited to -1 dBFS; strudel.cc plays the code unmastered'),
         tail: z.number().min(0).optional().describe('Seconds after the last cycle, for tails (default 0)'),
       },
     },
@@ -148,12 +154,14 @@ export async function serveMcp(): Promise<void> {
       const { code, language } = await codeOf(args);
       const bySection = args.sections ? parseSections(args.sections) : undefined;
       const options = { ...windowOf(args, 4, bySection), tail: args.tail ?? 0, language };
-      const { mix, layers } = args.layers ? await renderLayers(code, options, bySection) : { mix: await renderCode(code, options), layers: undefined };
+      const rendered = args.layers ? await renderLayers(code, options, bySection) : { mix: await renderCode(code, options), layers: undefined };
+      const mastered = args.master === undefined ? undefined : master(rendered.mix.channels, rendered.mix.sampleRate, { target: args.master });
+      const mix = mastered ? { ...rendered.mix, channels: mastered.channels } : rendered.mix;
       const file = resolve(args.out);
       await mkdir(dirname(file), { recursive: true });
       await writeFile(file, encodeWav(mix.channels, mix.sampleRate));
       const report = reportRender(mix, file, bySection);
-      return layers ? `${formatReport(report)}\n${formatLayers(layers, report)}` : formatReport(report);
+      return [formatReport(report), ...(mastered ? [formatMaster(mastered)] : []), ...(rendered.layers ? [formatLayers(rendered.layers, report)] : [])].join('\n');
     }),
   );
 
