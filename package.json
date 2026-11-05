@@ -15,19 +15,31 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
-    "check:examples": "node scripts/check-examples.ts"
+    "check:examples": "node scripts/check-examples.ts",
+    "check:docs": "node scripts/check-docs.ts"
   },
   "dependencies": {
     "@strudel/core": "1.2.6",
     "@strudel/mini": "1.2.6",
     "@strudel/tonal": "1.2.6",
     "@strudel/transpiler": "1.2.6",
+    "@strudel/xen": "1.2.6",
     "acorn": "8.19.0",
     "acorn-walk": "8.3.5",
-    "jsdoc": "4.0.5"
+    "jsdoc": "4.0.5",
+    "node-web-audio-api": "2.2.0",
+    "remark-frontmatter": "5.0.0",
+    "remark-gfm": "4.0.1",
+    "remark-mdx": "3.1.1",
+    "remark-parse": "11.0.0",
+    "remark-stringify": "11.0.0",
+    "superdough": "1.2.6",
+    "unified": "11.0.5"
   },
   "devDependencies": {
+    "@types/mdast": "^4.0.4",
     "@types/node": "^26.6.6",
+    "mdast-util-mdx": "^3.0.0",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
   }

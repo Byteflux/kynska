@@ -5,6 +5,7 @@ const pin = { version: '1.2.6', commit: 'd198910a86fcaecd658ef528bfa6d7884e93490
 export function entry(name: string, extra: Partial<ReferenceEntry> = {}): ReferenceEntry {
   return {
     name,
+    longname: name,
     synonyms: [],
     tags: [],
     module: 'core/controls',

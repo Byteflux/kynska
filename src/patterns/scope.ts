@@ -150,10 +150,11 @@ let ready: Promise<Scope> | undefined;
 export function ensureScope(): Promise<Scope> {
   ready ??= captureConsole([], async () => {
     const before = new Set(Object.getOwnPropertyNames(globalThis));
-    const [core, mini, tonal, transpiler] = await Promise.all([
+    const [core, mini, tonal, xen, transpiler] = await Promise.all([
       import('@strudel/core'),
       import('@strudel/mini'),
       import('@strudel/tonal'),
+      import('@strudel/xen'),
       import('@strudel/transpiler'),
     ]);
     for (const name of OUTPUT_METHODS) {
@@ -161,7 +162,20 @@ export function ensureScope(): Promise<Scope> {
         return this;
       };
     }
-    await core.evalScope(core, mini, tonal, OUTPUT_GLOBALS, {
+    // strudel.cc defines .piano() itself (not in any package): the piano samples,
+    // held to the note's length, a short release, and panned by pitch, low notes
+    // to the left. Same behaviour here.
+    const maxMidi = core.noteToMidi('C8');
+    core.Pattern.prototype.piano = function () {
+      return this.fmap((v: any) => ({ ...v, clip: v.clip ?? 1 }))
+        .s('piano')
+        .release(0.1)
+        .fmap((v: any) => {
+          const position = Math.min(Math.round(core.valueToMidi(v)) / maxMidi, 1);
+          return { ...v, pan: (v.pan || 1) * (position * 0.5 + 0.25) };
+        });
+    };
+    await core.evalScope(core, mini, tonal, xen, OUTPUT_GLOBALS, {
       // The transpiler rewrites slider(value, min, max) into a call to this editor
       // widget; headlessly the slider just stays at its starting value.
       sliderWithID: (_id: string, value: unknown) => core.pure(value),

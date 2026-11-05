@@ -111,6 +111,16 @@ function declaredNames(ast: Node): Set<string> {
         }
         break;
       }
+      case 'AssignmentExpression': {
+        // Pattern.prototype.micro = function (...) { ... }
+        const left = node.left;
+        const object = left.type === 'MemberExpression' ? left.object : undefined;
+        if (object?.type === 'MemberExpression' && object.object?.name === 'Pattern' && object.property?.name === 'prototype') {
+          const name = left.computed ? left.property.value : left.property.name;
+          if (typeof name === 'string') names.add(name);
+        }
+        break;
+      }
     }
   });
   return names;
@@ -186,7 +196,8 @@ export async function checkCode(code: string, options: CheckOptions = {}): Promi
   // Documented in Strudel but only available in the browser (MIDI, motion, CSound,
   // Kabelsalat, some visuals): fine for strudel.cc, stood in for here.
   const isBrowserOnly = (name: string) =>
-    isBrowserOnlyStub(name) || (Boolean(reference?.has(name)) && !(name in globalThis) && !patternMethods.has(name));
+    isBrowserOnlyStub(name) ||
+    ((Boolean(reference?.has(name)) || Boolean(reference?.browserOnlyPackage(name))) && !(name in globalThis) && !patternMethods.has(name));
 
   const calls: AnyNode[] = [];
   const identifiers: AnyNode[] = [];
@@ -225,7 +236,34 @@ export async function checkCode(code: string, options: CheckOptions = {}): Promi
   const browserOnly = new Map<string, 'function' | 'value'>();
   const noteBrowserOnly = (name: string, node: AnyNode, as: 'function' | 'value') => {
     if (browserOnly.get(name) !== 'function') browserOnly.set(name, as);
-    warnOnce(name, node, 'browser-only', `\`${name}\` only works in the browser (strudel.cc); it is stood in for here, so its effect is not checked.`);
+    const pkg = reference?.browserOnlyPackage(name);
+    warnOnce(
+      name,
+      node,
+      'browser-only',
+      `\`${name}\`${pkg ? ` (${pkg})` : ''} only works in the browser (strudel.cc); it is stood in for here, so its effect is not checked.`,
+    );
+  };
+  // Hydra code mixes in Hydra's own visual functions (osc, kaleid, out, ...), which
+  // Strudel does not define; with Hydra in use, unknown names are probably those.
+  const usesHydra = [...calls, ...identifiers].some((n) => {
+    const name = n.type === 'Identifier' ? n.name : calleeName(n)?.name;
+    return Boolean(name) && reference?.browserOnlyPackage(name) === '@strudel/hydra' && isFree(name);
+  });
+  const unknown = (diagnostic: Diagnostic, name: string) => {
+    if (!usesHydra) {
+      diagnostics.push(diagnostic);
+    } else if (!warned.has(name)) {
+      warned.add(name);
+      browserOnly.set(name, browserOnly.get(name) ?? 'function');
+      diagnostics.push({
+        severity: 'warning',
+        code: 'browser-only',
+        message: `\`${name}\` is not Strudel; with Hydra in use it is probably one of Hydra's visual functions, which are not checked.`,
+        line: diagnostic.line,
+        column: diagnostic.column,
+      });
+    }
   };
   const noteUndocumented = (name: string, node: AnyNode) => {
     if (reference && !reference.has(name) && !outputMethods.has(name)) {
@@ -247,13 +285,16 @@ export async function checkCode(code: string, options: CheckOptions = {}): Promi
       } else if (!(name in globalThis)) {
         const pool = [...strudelGlobals].filter((g) => typeof (globalThis as any)[g] === 'function');
         const suggestions = reference ? reference.suggest(name, pool) : suggest(name, pool);
-        diagnostics.push({
-          severity: 'error',
-          code: 'unknown-function',
-          message: `\`${name}\` is not a Strudel or JavaScript function.`,
-          ...at(node),
-          ...(suggestions.length ? { suggestions } : {}),
-        });
+        unknown(
+          {
+            severity: 'error',
+            code: 'unknown-function',
+            message: `\`${name}\` is not a Strudel or JavaScript function.`,
+            ...at(node),
+            ...(suggestions.length ? { suggestions } : {}),
+          },
+          name,
+        );
       } else if (strudelGlobals.has(name)) {
         noteUndocumented(name, node);
       }
@@ -263,13 +304,16 @@ export async function checkCode(code: string, options: CheckOptions = {}): Promi
       noteBrowserOnly(name, node, 'function');
     } else if (!patternMethods.has(name)) {
       const suggestions = reference ? reference.suggest(name, patternMethods) : suggest(name, patternMethods);
-      diagnostics.push({
-        severity: 'error',
-        code: 'unknown-method',
-        message: `Patterns have no method \`${name}\`.`,
-        ...at(node),
-        ...(suggestions.length ? { suggestions } : {}),
-      });
+      unknown(
+        {
+          severity: 'error',
+          code: 'unknown-method',
+          message: `Patterns have no method \`${name}\`.`,
+          ...at(node),
+          ...(suggestions.length ? { suggestions } : {}),
+        },
+        name,
+      );
     } else {
       noteUndocumented(name, node);
     }

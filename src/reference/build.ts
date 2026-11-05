@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { CACHE_DIR, REFERENCE_FILE } from '../paths.ts';
 import { ensureScope } from '../patterns/scope.ts';
+import { browserOnlyNames } from './browser-names.ts';
 import { readPin, type StrudelPin } from './pin.ts';
 import { toReference, type Doclet } from './transform.ts';
 import type { Reference } from './types.ts';
@@ -82,12 +83,15 @@ export async function buildReference(outFile = REFERENCE_FILE): Promise<Referenc
   const sourceRoot = await fetchStrudel(pin);
   const doclets = await readDoclets(sourceRoot);
   const { strudelGlobals, patternMethods } = await ensureScope();
-  const reference = toReference(doclets, {
-    pin,
-    sourceRoot,
-    isGlobal: (name) => strudelGlobals.has(name),
-    isMethod: (name) => patternMethods.has(name),
-  });
+  const reference: Reference = {
+    ...toReference(doclets, {
+      pin,
+      sourceRoot,
+      isGlobal: (name) => strudelGlobals.has(name),
+      isMethod: (name) => patternMethods.has(name),
+    }),
+    browserOnly: await browserOnlyNames(sourceRoot),
+  };
   await mkdir(dirname(outFile), { recursive: true });
   await writeFile(outFile, `${JSON.stringify(reference, null, 2)}\n`);
   return reference;

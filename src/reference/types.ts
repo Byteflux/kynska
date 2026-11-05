@@ -1,6 +1,8 @@
 /** One documented Strudel function. */
 export type ReferenceEntry = {
   name: string;
+  /** JSDoc's full name, e.g. "Pattern.slow" or "Pattern#withQuerySpan"; the docs site looks entries up by it. */
+  longname: string;
   /** Other names it can be called by (Strudel's @synonyms and @alias). */
   synonyms: string[];
   /** Categories from Strudel's @tags. Empty for releases that predate them. */
@@ -22,4 +24,9 @@ export type Reference = {
   schema: 1;
   strudel: { version: string; commit: string; repository: string };
   functions: ReferenceEntry[];
+  /**
+   * Names strudel.cc has in scope from packages Kynska cannot run headlessly
+   * (Hydra, MIDI, CSound, ...), mapped to their package; documented or not.
+   */
+  browserOnly?: Record<string, string>;
 };

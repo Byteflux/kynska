@@ -26,12 +26,14 @@ export class ReferenceIndex {
   readonly reference: Reference;
   private readonly byName = new Map<string, ReferenceEntry>();
   private readonly byLower = new Map<string, ReferenceEntry>();
+  private readonly byLongname = new Map<string, ReferenceEntry>();
 
   constructor(reference: Reference) {
     this.reference = reference;
     // Primary names win over synonyms, so index them first.
     for (const entry of reference.functions) this.add(entry.name, entry);
     for (const entry of reference.functions) for (const s of entry.synonyms) this.add(s, entry);
+    for (const entry of reference.functions) if (entry.longname) this.byLongname.set(entry.longname, entry);
   }
 
   private add(name: string, entry: ReferenceEntry) {
@@ -49,13 +51,18 @@ export class ReferenceIndex {
     return this.byName.has(name);
   }
 
-  /** Exact match first, then a case-insensitive one. */
+  /** Exact match on a name, synonym or JSDoc full name ("Pattern.slow"), then a case-insensitive one. */
   find(name: string): ReferenceEntry | undefined {
-    return this.byName.get(name) ?? this.byLower.get(name.toLowerCase());
+    return this.byName.get(name) ?? this.byLongname.get(name) ?? this.byLower.get(name.toLowerCase());
   }
 
   suggest(name: string, extra: Iterable<string> = [], limit = 3): string[] {
     return suggest(name, [...this.byName.keys(), ...extra], limit);
+  }
+
+  /** The package a browser-only name comes from, if strudel.cc defines it in one. */
+  browserOnlyPackage(name: string): string | undefined {
+    return Object.hasOwn(this.reference.browserOnly ?? {}, name) ? this.reference.browserOnly![name] : undefined;
   }
 
   withTag(tag: string): ReferenceEntry[] {

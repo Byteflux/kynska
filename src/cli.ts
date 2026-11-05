@@ -1,8 +1,13 @@
 #!/usr/bin/env node
-import { readFile } from 'node:fs/promises';
-import { relative } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join, relative } from 'node:path';
 import { parseArgs } from 'node:util';
-import { ROOT } from './paths.ts';
+import { analyse, detectOnsets } from './audio/analyse.ts';
+import { renderCode } from './audio/render.ts';
+import { formatReport, formatStats, reportRender } from './audio/report.ts';
+import { decodeWav, encodeWav } from './audio/wav.ts';
+import { buildDocs, formatDocsResult } from './docs/build.ts';
+import { OUT_DIR, ROOT } from './paths.ts';
 import { checkCode, type Diagnostic } from './patterns/check.ts';
 import { diffCode, formatDiff } from './patterns/diff.ts';
 import { runPattern } from './patterns/events.ts';
@@ -19,10 +24,16 @@ Commands:
                                           Compare the events of two versions (default 1 cycle)
   lookup <name> [--json]                  Show a function from the Strudel reference
   lookup --tag <tag> | --module <module>  List functions by tag or module
+  render [file] [--cycles N] [--out file.wav] [--tail S] [--sample-rate R] [--json]
+                                          Render to a WAV file (default 4 cycles, out/render.wav)
+                                          and measure it: level, loudness, clipping, silence, onsets
+  analyse <file.wav> [--json]             Measure any WAV file the same way (onsets: detected count)
   reference build                         Fetch the pinned Strudel source and build out/reference.json
+  docs build                              Build out/reference.json, the docs pages, llms.txt and llms-full.txt
 
 Code is read from a file, or from stdin when the file is "-" or omitted.
-Exit codes: 0 success; 1 errors found (check), a difference (diff) or failure; 2 bad usage.`;
+Exit codes: 0 success; 1 errors found (check), a difference (diff), an event that failed to
+play (render) or failure; 2 bad usage.`;
 
 class UsageError extends Error {}
 
@@ -62,6 +73,9 @@ async function main(argv: string[]): Promise<number> {
     allowPositionals: true,
     options: {
       cycles: { type: 'string' },
+      out: { type: 'string' },
+      tail: { type: 'string' },
+      'sample-rate': { type: 'string' },
       json: { type: 'boolean', default: false },
       tag: { type: 'string' },
       module: { type: 'string' },
@@ -128,6 +142,35 @@ async function main(argv: string[]): Promise<number> {
         return 1;
       }
       print(entry, () => formatEntry(entry, name));
+      return 0;
+    }
+    case 'render': {
+      const tail = values.tail === undefined ? 0 : Number(values.tail);
+      if (!(tail >= 0)) throw new UsageError(`--tail must be zero or more seconds, got "${values.tail}"`);
+      const sampleRate = values['sample-rate'] === undefined ? 48000 : Number(values['sample-rate']);
+      if (!Number.isInteger(sampleRate) || sampleRate < 8000 || sampleRate > 192000) {
+        throw new UsageError(`--sample-rate must be a whole number of Hz from 8000 to 192000, got "${values['sample-rate']}"`);
+      }
+      const rendered = await renderCode(await readCode(args[0]), { cycles: cyclesOf(values.cycles, 4), tail, sampleRate });
+      const file = values.out ?? join(OUT_DIR, 'render.wav');
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, encodeWav(rendered.channels, rendered.sampleRate));
+      const report = reportRender(rendered, relative(process.cwd(), file) || file);
+      print(report, () => formatReport(report));
+      return report.errors.length ? 1 : 0;
+    }
+    case 'analyse': {
+      if (!args[0]) throw new UsageError('analyse needs a WAV file');
+      const { channels, sampleRate } = decodeWav(await readFile(args[0]));
+      const stats = analyse(channels, sampleRate);
+      const onsets = detectOnsets(channels, sampleRate);
+      print({ stats, onsets }, () => `${formatStats(stats)}\nOnsets: ${onsets.length} detected`);
+      return 0;
+    }
+    case 'docs': {
+      if (args[0] !== 'build') throw new UsageError('usage: kynska docs build');
+      const result = await buildDocs();
+      console.error(formatDocsResult(result));
       return 0;
     }
     case 'reference': {

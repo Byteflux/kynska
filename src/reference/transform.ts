@@ -6,6 +6,7 @@ import type { StrudelPin } from './pin.ts';
 /** The doclet fields this module reads. */
 export type Doclet = {
   name?: string;
+  longname?: string;
   kind?: string;
   scope?: string;
   memberof?: string;
@@ -67,6 +68,7 @@ function toEntry(d: Doclet, opts: TransformOptions): ReferenceEntry {
   const returns = d.returns?.map((r) => r.description || r.type?.names?.join(' | ')).filter(Boolean).join('; ');
   return {
     name,
+    longname: d.longname ?? name,
     synonyms: [...new Set(synonyms)].filter((s) => s !== name),
     tags: [...new Set(d.kynskaTags ?? [])],
     module,
