@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { analyse, detectOnsets, loudness, matchOnsets } from '../src/audio/analyse.ts';
 import { renderCode } from '../src/audio/render.ts';
 import { reportRender } from '../src/audio/report.ts';
+import { isPlainData } from '../src/audio/soundfonts.ts';
 import { decodeWav, encodeWav } from '../src/audio/wav.ts';
 
 const RATE = 48000;
@@ -100,6 +101,23 @@ describe('onsets', () => {
   });
 });
 
+describe('soundfont data guard', () => {
+  it('accepts an instrument file as the loader evaluates it', () => {
+    const file = "console.log('load _tone_x');\nvar _tone_x={\n\tzones:[{midi:32,originalPitch:-3800,file:'SUQz'\n//comment\n}]\n};\n";
+    expect(isPlainData(file)).toBe(true);
+  });
+
+  it.each([
+    ['a call', "var x={zones:[{file:fetch('x')}]};"],
+    ['a function', 'var x={zones(){ return 1 }};'],
+    ['a variable', 'var x={zones:process};'],
+    ['code after the data', "var x={zones:[]};require('fs')"],
+    ['no data at all', "console.log('x')"],
+  ])('refuses %s', (_, file) => {
+    expect(isPlainData(file)).toBe(false);
+  });
+});
+
 describe('renderCode', () => {
   it('renders synth notes where the pattern puts them', async () => {
     const rendered = await renderCode('note("c3 e3 g3 b3").s("sawtooth")', { cycles: 1 });
@@ -140,6 +158,15 @@ describe('renderCode', () => {
   it('refuses renders over the length limit', async () => {
     await expect(renderCode('s("bd")', { cycles: 10, maxSeconds: 5 })).rejects.toThrow(/longer than the 5 s limit/);
   }, 30_000);
+
+  // Loads the soundfont loader from the pinned Strudel source and the instrument from its host on first run.
+  it('renders General MIDI soundfont instruments', async () => {
+    const rendered = await renderCode('note("c4 e4 g4 c5").s("gm_piano")', { cycles: 1 });
+    expect(rendered.errors).toEqual([]);
+    const report = reportRender(rendered);
+    expect(report.stats.peakDb).toBeGreaterThan(-30);
+    expect(report.onsets).toMatchObject({ expected: 4, matched: 4 });
+  }, 120_000);
 
   it('rejects code that does not evaluate', async () => {
     await expect(renderCode('nonsense("bd")', { cycles: 1 })).rejects.toThrow(/nonsense/);

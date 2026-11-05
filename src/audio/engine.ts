@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CACHE_DIR } from '../paths.ts';
+import { isPlainData, SOUNDFONT_HOST } from './soundfonts.ts';
 
 const CDN = 'https://strudel.b-cdn.net';
 
@@ -36,17 +37,28 @@ function cachingFetch(original: typeof fetch): typeof fetch {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (!/^https?:\/\//.test(url) || (init?.method && init.method !== 'GET')) return original(input, init);
     const file = join(dir, createHash('sha256').update(url).digest('hex'));
+    // Soundfont instruments are JavaScript files the loader runs with eval:
+    // only plain data gets through.
+    const guard = (body: Buffer) => {
+      if (SOUNDFONT_HOST.test(url) && !isPlainData(body.toString('utf8'))) {
+        throw new Error(`refusing soundfont ${url}: it is not plain data`);
+      }
+      return body;
+    };
+    let cached: Buffer | undefined;
     try {
-      return new Response(await readFile(file));
+      cached = await readFile(file);
     } catch {
-      // A dead network must not hang a render: give up on a download after 20 s.
-      const response = await original(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(20_000) });
-      if (!response.ok) return response;
-      const body = Buffer.from(await response.arrayBuffer());
-      await mkdir(dir, { recursive: true });
-      await writeFile(file, body);
-      return new Response(body, { status: response.status, headers: response.headers });
+      // not downloaded yet
     }
+    if (cached) return new Response(new Uint8Array(guard(cached)));
+    // A dead network must not hang a render: give up on a download after 20 s.
+    const response = await original(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(20_000) });
+    if (!response.ok) return response;
+    const body = guard(Buffer.from(await response.arrayBuffer()));
+    await mkdir(dir, { recursive: true });
+    await writeFile(file, body);
+    return new Response(new Uint8Array(body), { status: response.status, headers: response.headers });
   };
 }
 

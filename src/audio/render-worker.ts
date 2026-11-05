@@ -7,6 +7,7 @@ import { evaluateCode } from '../patterns/evaluate.ts';
 import { eventsOf } from '../patterns/events.ts';
 import { captureConsole, engineMessages } from '../patterns/scope.ts';
 import { attachContext, ensureAudio } from './engine.ts';
+import { registerSoundfonts } from './soundfonts.ts';
 import type { RenderOptions, Rendered } from './render.ts';
 
 async function render(code: string, options: Required<RenderOptions>): Promise<Rendered> {
@@ -34,6 +35,14 @@ async function render(code: string, options: Required<RenderOptions>): Promise<R
       .filter((hap: any) => hap.hasOnset())
       .sort((a: any, b: any) => a.whole.begin.valueOf() - b.whole.begin.valueOf()),
   );
+  // General MIDI instruments are only loaded when the pattern plays one.
+  if (haps.some((hap: any) => typeof hap.value?.s === 'string' && hap.value.s.startsWith('gm_'))) {
+    try {
+      await registerSoundfonts();
+    } catch (e) {
+      warnings.add(`could not load soundfont instruments: ${(e as Error).message}`);
+    }
+  }
   for (const hap of haps) {
     hap.ensureObjectValue();
     const t = hap.whole.begin.valueOf() / cps;
