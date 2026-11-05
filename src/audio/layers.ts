@@ -17,11 +17,11 @@ export type LayersResult = {
 /** Renders at most this many at once: each render keeps about one CPU busy. */
 const PARALLEL = Math.max(1, Math.min(3, availableParallelism() - 1));
 
-export async function renderLayers(code: string, options: RenderOptions = {}, sections?: Section[]): Promise<LayersResult> {
+export async function renderLayers(code: string, options: RenderOptions = {}, sections?: Section[], concurrency = PARALLEL): Promise<LayersResult> {
   const all = options.language === 'mondo' ? [] : findLayers(code);
   const playing = playingLayers(all);
   const jobs: (Layer | undefined)[] = [undefined, ...(playing.length > 1 ? playing : [])];
-  const rendered = await pool(jobs, PARALLEL, (layer) => renderCode(layer ? soloLayer(code, layer, all) : code, options));
+  const rendered = await pool(jobs, concurrency, (layer) => renderCode(layer ? soloLayer(code, layer, all) : code, options));
   const [mix, ...alone] = rendered;
   return {
     mix,

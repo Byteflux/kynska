@@ -1,8 +1,9 @@
 // The agent under test: a chat model behind an OpenAI-compatible API.
 //  - baseline: the task alone, one answer, no tools.
 //  - kynska: the strudel skill as instructions and a `kynska` tool mirroring the
-//    CLI (check, events, diff, lookup, plus reading skill and docs files).
-import { readFile } from 'node:fs/promises';
+//    CLI, including offline render, plus reading skill and docs files.
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, normalize } from 'node:path';
 import { OUT_DIR, ROOT } from '../src/paths.ts';
 import { checkCode, formatCheck } from '../src/patterns/check.ts';
@@ -11,6 +12,7 @@ import { runPattern } from '../src/patterns/events.ts';
 import { formatForm, formOf } from '../src/patterns/form.ts';
 import { parseSections, windowOf } from '../src/patterns/sections.ts';
 import { formatEntry, type ReferenceIndex } from '../src/reference/lookup.ts';
+import { emptyCosts, evalRender, type RenderCosts } from './render.ts';
 
 export type Condition = 'baseline' | 'kynska';
 
@@ -18,7 +20,8 @@ export type Condition = 'baseline' | 'kynska';
  * is asked for its final code, as when it runs out of turns. */
 export type ModelConfig = { baseUrl: string; apiKey: string; model: string; budgetMs?: number };
 
-export type AgentResult = { code: string; turns: number; toolCalls: number; tokens: number; transcript: unknown[] };
+export type AgentCosts = RenderCosts & { turns: number; toolCalls: number; tokens: number };
+export type AgentResult = AgentCosts & { code: string; transcript: unknown[] };
 
 type Message = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string | null; tool_calls?: ToolCall[]; tool_call_id?: string };
 type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
@@ -33,7 +36,7 @@ async function kynskaSystem(): Promise<string> {
   const skill = (await readFile(join(SKILL_DIR, 'SKILL.md'), 'utf8')).replace(/^---[\s\S]*?---\n/, '');
   return `${BASELINE_SYSTEM}
 
-In this environment you have no shell; the kynska CLI is the \`kynska\` tool, which takes code inline instead of a file. Reference files beside the skill (compose.md, arrange.md, mix.md, tidal.md, debug.md) and docs pages (docs/learn/mini-notation.md, ...) are read with its "read" command. Rendering is not available here: prove your work with check and events. When done, reply with the final code in one \`\`\`js block.
+In this environment you have no shell; the kynska CLI is the \`kynska\` tool, which takes code inline instead of a file. Reference files beside the skill (compose.md, arrange.md, mix.md, tidal.md, debug.md) and docs pages (docs/learn/mini-notation.md, ...) are read with its "read" command. Use render to measure audio, layers and sections, draft with from/to, and master to a LUFS target. Each render is capped at 32 seconds including tails and uses cached sounds only. WAVs are temporary. When done, reply with the final code in one \`\`\`js block.
 
 ${skill}`;
 }
@@ -42,16 +45,22 @@ const TOOL = {
   type: 'function',
   function: {
     name: 'kynska',
-    description: 'Run a kynska command on Strudel code: check, events, diff, form, lookup, or read a skill or docs file.',
+    description: 'Run a kynska command on Strudel code: check, events, diff, form, render, lookup, or read a skill or docs file.',
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', enum: ['check', 'events', 'diff', 'form', 'lookup', 'read'] },
-        code: { type: 'string', description: 'Strudel code, for check, events and form' },
-        sections: { type: 'string', description: 'for form: section lengths in cycles, e.g. "intro=4,A=8"' },
+        command: { type: 'string', enum: ['check', 'events', 'diff', 'form', 'render', 'lookup', 'read'] },
+        code: { type: 'string', description: 'Strudel code, for check, events, form and render' },
+        sections: { type: 'string', description: 'for form/render: section lengths in cycles, e.g. "intro=4,A=8"' },
+        from: { type: 'number', description: 'for render: first cycle, zero-based' },
+        to: { type: 'number', description: 'for render: end cycle, exclusive; use to or cycles' },
+        layers: { type: 'boolean', description: 'for render: measure each labelled layer alone too' },
+        master: { type: 'number', description: 'for render: negative LUFS target, e.g. -14, with -1 dBFS peak ceiling' },
+        tail: { type: 'number', description: 'for render: extra seconds for release/reverb, default 0' },
+        sampleRate: { type: 'number', description: 'for render: Hz, default 48000' },
         before: { type: 'string', description: 'for diff: the earlier code' },
         after: { type: 'string', description: 'for diff: the later code' },
-        cycles: { type: 'number', description: 'cycles to query (events, diff, check)' },
+        cycles: { type: 'number', description: 'cycles to query or render (events, diff, check, form, render)' },
         name: { type: 'string', description: 'for lookup: a function name' },
         file: { type: 'string', description: 'for read: e.g. compose.md or docs/learn/mini-notation.md' },
       },
@@ -61,10 +70,12 @@ const TOOL = {
 };
 
 /** Runs one tool call, returning what the CLI would print. */
-export async function runTool(args: Record<string, any>, reference: ReferenceIndex): Promise<string> {
+export async function runTool(args: Record<string, any>, reference: ReferenceIndex, costs: RenderCosts = emptyCosts(), directory?: string): Promise<string> {
   const cycles = typeof args.cycles === 'number' && args.cycles > 0 ? Math.min(args.cycles, 64) : undefined;
   try {
     switch (args.command) {
+      case 'render':
+        return (await evalRender(String(args.code ?? ''), args, costs, directory)).text;
       case 'check':
         return formatCheck(await checkCode(String(args.code ?? ''), { reference, cycles: cycles ?? 4 }), 'code');
       case 'events': {
@@ -91,7 +102,7 @@ export async function runTool(args: Record<string, any>, reference: ReferenceInd
         return await readFile(path, 'utf8');
       }
       default:
-        return `Unknown command "${args.command}"; use check, events, diff, form, lookup or read.`;
+        return `Unknown command "${args.command}"; use check, events, diff, form, render, lookup or read.`;
     }
   } catch (error) {
     return `error: ${(error as Error).message}`;
@@ -102,7 +113,7 @@ export async function runTool(args: Record<string, any>, reference: ReferenceInd
  * GLM-5.3 spent every token reasoning on half the tasks and wrote no code. */
 const MAX_REPLY_TOKENS = 16384;
 
-async function complete(config: ModelConfig, messages: Message[], tools: boolean): Promise<{ message: Message; tokens: number }> {
+async function complete(config: ModelConfig, messages: Message[], tools: boolean, recordTokens: (tokens: number) => void): Promise<Message> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     let data: { choices: { message: Message; finish_reason?: string }[]; usage?: { total_tokens?: number } };
@@ -121,11 +132,12 @@ async function complete(config: ModelConfig, messages: Message[], tools: boolean
       continue;
     }
     const { message, finish_reason } = data.choices[0];
+    recordTokens(data.usage?.total_tokens ?? 0);
     // A reply cut off before any answer is the model's failure, not a network one: no retry.
     if (finish_reason === 'length' && !message.content?.trim() && !message.tool_calls?.length) {
       throw new Error(`reply cut off at ${MAX_REPLY_TOKENS} tokens before any answer`);
     }
-    return { message, tokens: data.usage?.total_tokens ?? 0 };
+    return message;
   }
   throw lastError;
 }
@@ -136,35 +148,43 @@ export function extractCode(text: string): string {
   return blocks.length ? blocks[blocks.length - 1][1].trim() : text.trim();
 }
 
-export async function runAgent(prompt: string, condition: Condition, config: ModelConfig, reference: ReferenceIndex): Promise<AgentResult> {
+export async function runAgent(prompt: string, condition: Condition, config: ModelConfig, reference: ReferenceIndex, costs: AgentCosts = { ...emptyCosts(), turns: 0, toolCalls: 0, tokens: 0 }): Promise<AgentResult> {
+  const directory = await mkdtemp(join(tmpdir(), 'kynska-eval-run-'));
+  try {
+    return await runAgentTurns(prompt, condition, config, reference, costs, directory);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function runAgentTurns(prompt: string, condition: Condition, config: ModelConfig, reference: ReferenceIndex, costs: AgentCosts, directory: string): Promise<AgentResult> {
   const messages: Message[] = [
     { role: 'system', content: condition === 'kynska' ? await kynskaSystem() : BASELINE_SYSTEM },
     { role: 'user', content: prompt },
   ];
-  let tokens = 0;
-  let toolCalls = 0;
   const deadline = performance.now() + (config.budgetMs ?? Infinity);
   let turn = 1;
   for (; turn <= (condition === 'kynska' ? MAX_TURNS : 1) && (turn === 1 || performance.now() < deadline); turn++) {
-    const { message, tokens: used } = await complete(config, messages, condition === 'kynska');
-    tokens += used;
+    costs.turns = turn;
+    const message = await complete(config, messages, condition === 'kynska', (used) => { costs.tokens += used; });
     messages.push({ role: 'assistant', content: message.content ?? '', ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}) });
-    if (!message.tool_calls?.length) return { code: extractCode(message.content ?? ''), turns: turn, toolCalls, tokens, transcript: messages };
+    if (condition === 'baseline' || !message.tool_calls?.length) return { code: extractCode(message.content ?? ''), ...costs, transcript: messages };
     for (const call of message.tool_calls) {
-      toolCalls++;
+      costs.toolCalls++;
       let args: Record<string, unknown> = {};
       try {
         args = JSON.parse(call.function.arguments || '{}');
       } catch {
         // leave empty; the tool reports the unknown command
       }
-      const output = (await runTool(args, reference)).slice(0, MAX_TOOL_OUTPUT);
+      const output = (await runTool(args, reference, costs, directory)).slice(0, MAX_TOOL_OUTPUT);
       messages.push({ role: 'tool', tool_call_id: call.id, content: output });
     }
   }
   // Out of turns or time: ask for the final answer without tools.
   messages.push({ role: 'user', content: 'Reply now with your final code in one ```js block.' });
-  const { message, tokens: used } = await complete(config, messages, false);
+  costs.turns = turn;
+  const message = await complete(config, messages, false, (used) => { costs.tokens += used; });
   messages.push({ role: 'assistant', content: message.content ?? '' });
-  return { code: extractCode(message.content ?? ''), turns: turn, toolCalls, tokens: tokens + used, transcript: messages };
+  return { code: extractCode(message.content ?? ''), ...costs, transcript: messages };
 }

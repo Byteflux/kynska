@@ -20,6 +20,8 @@ export type RenderOptions = {
   timeout?: number;
   /** 'mondo' for code written entirely in Mondo notation. Default 'js'. */
   language?: Language;
+  /** Use cached sounds only; never download a missing sample. Default false. */
+  offline?: boolean;
 };
 
 export type Rendered = {
@@ -41,7 +43,7 @@ export type Rendered = {
 
 /** Evaluates Strudel code the way the REPL does and renders it. Throws on evaluation errors. */
 export function renderCode(code: string, options: RenderOptions = {}): Promise<Rendered> {
-  const settings: Required<RenderOptions> = { from: 0, cycles: 4, sampleRate: 48000, tail: 0, maxSeconds: 600, timeout: 600, language: 'js', ...options };
+  const settings: Required<RenderOptions> = { from: 0, cycles: 4, sampleRate: 48000, tail: 0, maxSeconds: 600, timeout: 600, language: 'js', offline: false, ...options };
   if (!(settings.cycles > 0)) return Promise.reject(new RangeError(`cycles must be positive, got ${settings.cycles}`));
   if (!(settings.from >= 0)) return Promise.reject(new RangeError(`from must be zero or more, got ${settings.from}`));
   if (!(settings.tail >= 0)) return Promise.reject(new RangeError(`tail must be zero or more, got ${settings.tail}`));

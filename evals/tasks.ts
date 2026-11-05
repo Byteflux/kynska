@@ -2,16 +2,21 @@
 //  - transcribe: Strudel's own documented examples, given as their events; write
 //    code that produces exactly those events. Score: event F1.
 //  - describe: a musical brief in words; score: the share of its criteria met.
+//  - produce: a production brief, scored on rendered audio and events.
 import { createHash } from 'node:crypto';
 import { ensureScope } from '../src/patterns/scope.ts';
 import { runPattern, type PatternEvent } from '../src/patterns/events.ts';
 import type { Reference } from '../src/reference/types.ts';
 import { fraction, midiOf, near, onsetsOf, sameTimes } from './score.ts';
+import { scoreProduction, type ProduceTask } from './produce.ts';
+import type { RenderCosts } from './render.ts';
+export { produceTasks } from './produce.ts';
 
 export type Run = { events: PatternEvent[]; cps: number };
 export type Criterion = { name: string; pass: (run: Run, noteToMidi: (n: string) => number) => boolean };
 
 export type Task =
+  | ProduceTask
   | { id: string; kind: 'transcribe'; cycles: number; prompt: string; expected: PatternEvent[]; solution: string }
   | { id: string; kind: 'describe'; cycles: number; prompt: string; criteria: Criterion[]; solution: string };
 
@@ -183,7 +188,8 @@ export const describeTasks: Task[] = [
 export type Score = { score: number; detail: string; error?: string };
 
 /** Scores candidate code for a task. Code that fails to evaluate scores 0. */
-export async function scoreTask(task: Task, code: string): Promise<Score> {
+export async function scoreTask(task: Task, code: string, costs?: RenderCosts): Promise<Score> {
+  if (task.kind === 'produce') return scoreProduction(task, code, costs);
   let run: Run;
   try {
     run = await runPattern(code, task.cycles);

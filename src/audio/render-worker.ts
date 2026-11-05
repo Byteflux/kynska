@@ -16,9 +16,9 @@ async function render(code: string, options: Required<RenderOptions>): Promise<R
   if (error) throw error;
   const seconds = cycles / cps + tail;
   if (seconds > options.maxSeconds) {
-    throw new RangeError(`${seconds.toFixed(0)} s is longer than the ${options.maxSeconds} s limit; render fewer cycles`);
+    throw new RangeError(`${Number(seconds.toFixed(2))} s is longer than the ${options.maxSeconds} s limit; render fewer cycles`);
   }
-  const engine = await ensureAudio();
+  const engine = await ensureAudio(options.offline);
   const errors = new Set<string>();
   const warnings = new Set<string>(engine.soundWarnings);
   engine.log = (message) => {
@@ -38,7 +38,7 @@ async function render(code: string, options: Required<RenderOptions>): Promise<R
   // General MIDI instruments are only loaded when the pattern plays one.
   if (haps.some((hap: any) => typeof hap.value?.s === 'string' && hap.value.s.startsWith('gm_'))) {
     try {
-      await registerSoundfonts();
+      await registerSoundfonts(options.offline);
     } catch (e) {
       warnings.add(`could not load soundfont instruments: ${(e as Error).message}`);
     }

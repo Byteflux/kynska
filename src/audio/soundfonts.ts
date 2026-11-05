@@ -3,9 +3,11 @@
 // its loader and instrument list are loaded from the pinned Strudel source in
 // .cache/, against the superdough Kynska renders with (see webaudio-shim.ts).
 import { registerHooks } from 'node:module';
+import { access } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseExpressionAt, type Node } from 'acorn';
+import { CACHE_DIR } from '../paths.ts';
 
 type AnyNode = Node & Record<string, any>;
 
@@ -59,12 +61,15 @@ export function isPlainData(source: string): boolean {
 let registered: Promise<void> | undefined;
 
 /** Registers the gm_* instruments with superdough. Needs the pinned Strudel source (fetched if missing). */
-export function registerSoundfonts(): Promise<void> {
+export function registerSoundfonts(offline = false): Promise<void> {
   registered ??= (async () => {
     const { readPin } = await import('../reference/pin.ts');
     const { fetchStrudel } = await import('../reference/build.ts');
-    const source = await fetchStrudel(await readPin());
+    const pin = await readPin();
+    const source = offline ? join(CACHE_DIR, 'strudel', pin.commit) : await fetchStrudel(pin);
     const dir = join(source, 'packages', 'soundfonts');
+    // An eval may use gm_* too, but must never fetch an upstream checkout.
+    if (offline) await access(join(dir, 'fontloader.mjs'));
     const shim = new URL('./webaudio-shim.ts', import.meta.url).href;
     registerHooks({
       resolve: (specifier, context, next) =>

@@ -35,7 +35,7 @@ const DOWNLOAD_ATTEMPTS = 3;
 /** Network errors that usually pass on a second try. */
 const TRANSIENT = /^(EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT)$/;
 
-export function cachingFetch(original: typeof fetch, dir = join(CACHE_DIR, 'sounds'), retryDelayMs = 300): typeof fetch {
+export function cachingFetch(original: typeof fetch, dir = join(CACHE_DIR, 'sounds'), retryDelayMs = 300, offline = false): typeof fetch {
   return async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (!/^https?:\/\//.test(url) || (init?.method && init.method !== 'GET')) return original(input, init);
@@ -55,6 +55,7 @@ export function cachingFetch(original: typeof fetch, dir = join(CACHE_DIR, 'soun
       // not downloaded yet
     }
     if (cached) return new Response(new Uint8Array(guard(cached)));
+    if (offline) throw new Error(`sound is not cached: ${url} (offline render)`);
     // A dead network must not hang a render: give up on a download after 20 s.
     let response: Response | undefined;
     for (let attempt = 1; !response; attempt++) {
@@ -81,7 +82,7 @@ export function cachingFetch(original: typeof fetch, dir = join(CACHE_DIR, 'soun
 }
 
 /** The same default sounds strudel.cc loads, from Strudel's CDN. */
-async function registerDefaultSounds(sd: any, warnings: string[]) {
+export async function registerDefaultSounds(sd: any, warnings: string[]) {
   const banks: [string, string][] = [
     [`${CDN}/piano.json`, `${CDN}/piano/`],
     [`${CDN}/vcsl.json`, `${CDN}/VCSL/`],
@@ -91,15 +92,15 @@ async function registerDefaultSounds(sd: any, warnings: string[]) {
     [`${CDN}/mridangam.json`, `${CDN}/mrid/`],
     ['github:tidalcycles/dirt-samples', ''],
   ];
-  await Promise.all([
-    sd.registerSynthSounds(),
-    sd.registerZZFXSounds(),
-    ...banks.map(([map, base]) =>
-      (base ? sd.samples(map, base, { prebake: true }) : sd.samples(map)).catch((e: Error) =>
-        warnings.push(`could not load sample bank ${map}: ${e.message}`),
-      ),
-    ),
-  ]);
+  await sd.registerSynthSounds();
+  await sd.registerZZFXSounds();
+  // Banks share names (bd, hh, ...). Register in order so the last bank wins
+  // consistently, rather than whichever cached map happens to load last.
+  for (const [map, base] of banks) {
+    await (base ? sd.samples(map, base, { prebake: true }) : sd.samples(map)).catch((e: Error) =>
+      warnings.push(`could not load sample bank ${map}: ${e.message}`),
+    );
+  }
   try {
     await sd.aliasBank(`${CDN}/tidal-drum-machines-alias.json`);
   } catch (e) {
@@ -109,13 +110,13 @@ async function registerDefaultSounds(sd: any, warnings: string[]) {
 
 let ready: Promise<AudioEngine> | undefined;
 
-export function ensureAudio(): Promise<AudioEngine> {
+export function ensureAudio(offline = false): Promise<AudioEngine> {
   ready ??= (async () => {
     const wa: any = await import('node-web-audio-api');
     for (const [name, value] of Object.entries(wa)) {
       if (name !== 'default' && !(name in globalThis)) (globalThis as any)[name] = value;
     }
-    globalThis.fetch = cachingFetch(globalThis.fetch);
+    globalThis.fetch = cachingFetch(globalThis.fetch, undefined, undefined, offline);
 
     // superdough loads its AudioWorklet processors once per process (into the first
     // context); record them so every new offline context can load them too.

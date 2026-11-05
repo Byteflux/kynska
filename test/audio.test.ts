@@ -1,7 +1,8 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { cachingFetch } from '../src/audio/engine.ts';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { describe, expect, it, vi } from 'vitest';
+import { cachingFetch, registerDefaultSounds } from '../src/audio/engine.ts';
 import { analyse, detectOnsets, loudness, matchOnsets } from '../src/audio/analyse.ts';
 import { renderCode } from '../src/audio/render.ts';
 import { reportRender } from '../src/audio/report.ts';
@@ -31,6 +32,32 @@ function plucks(seconds: number, starts: number[]): Float32Array {
 const db = (x: number) => 20 * Math.log10(x);
 
 describe('sound downloads', () => {
+  it('never calls the network for an uncached sound in offline mode', async () => {
+    const network = vi.fn<typeof fetch>();
+    const offline = cachingFetch(network, join(tmpdir(), `kynska-offline-${process.pid}`), 0, true);
+    await expect(offline('https://example.test/uncached.wav')).rejects.toThrow(/not cached.*offline render/);
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it('registers overlapping banks in a stable order even when the first map is slow', async () => {
+    const completed: string[] = [];
+    let release!: () => void;
+    const first = new Promise<void>((resolve) => { release = resolve; });
+    const sd = {
+      registerSynthSounds: async () => {}, registerZZFXSounds: async () => {}, aliasBank: async () => {},
+      samples: async (url: string) => {
+        if (url.endsWith('/piano.json')) await first;
+        completed.push(url);
+      },
+    };
+    const registered = registerDefaultSounds(sd, []);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(completed).toEqual([]);
+    release();
+    await registered;
+    expect(completed.map((s) => s.split('/').at(-1))).toEqual(['piano.json', 'vcsl.json', 'tidal-drum-machines.json', 'uzu-drumkit.json', 'uzu-wavetables.json', 'mridangam.json', 'dirt-samples']);
+  });
+
   it('names the URL and the cause when a download fails, not a bare "fetch failed"', async () => {
     const dead = (async () => {
       throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND strudel.b-cdn.net'), { code: 'ENOTFOUND' }) });
@@ -47,13 +74,20 @@ describe('sound downloads', () => {
       if (++calls < 3) throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo EAI_AGAIN strudel.b-cdn.net'), { code: 'EAI_AGAIN' }) });
       return new Response('sample');
     }) as typeof fetch;
-    const dir = join(tmpdir(), `kynska-sounds-${process.pid}-b`);
-    const fetchSound = cachingFetch(flaky, dir, 1);
-    expect(await (await fetchSound('https://strudel.b-cdn.net/piano/Ds2v8.mp3')).text()).toBe('sample');
-    expect(calls).toBe(3);
-    // and the sample is cached, so the next render does not download it again
-    expect(await (await fetchSound('https://strudel.b-cdn.net/piano/Ds2v8.mp3')).text()).toBe('sample');
-    expect(calls).toBe(3);
+    const dir = await mkdtemp(join(tmpdir(), 'kynska-sounds-'));
+    try {
+      const fetchSound = cachingFetch(flaky, dir, 1);
+      expect(await (await fetchSound('https://strudel.b-cdn.net/piano/Ds2v8.mp3')).text()).toBe('sample');
+      expect(calls).toBe(3);
+      // and the sample is cached, so the next render does not download it again
+      expect(await (await fetchSound('https://strudel.b-cdn.net/piano/Ds2v8.mp3')).text()).toBe('sample');
+      expect(calls).toBe(3);
+      const offline = cachingFetch(flaky, dir, 1, true);
+      expect(await (await offline('https://strudel.b-cdn.net/piano/Ds2v8.mp3')).text()).toBe('sample');
+      expect(calls).toBe(3);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('does not retry a timeout', async () => {

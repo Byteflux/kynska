@@ -1,4 +1,4 @@
-// Scoring helpers: everything is decided from the events a candidate produces.
+// Event comparison and pitch/timing helpers shared by the eval scorers.
 import type { PatternEvent } from '../src/patterns/events.ts';
 
 /** JSON with object keys sorted, so equal values compare equal. */
