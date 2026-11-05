@@ -161,7 +161,7 @@ tools against Strudel's own material (CI runs all of them):
 - **describe** (8): a musical brief in words; scored by criteria on the events.
 
 ```bash
-KYNSKA_EVAL_BASE_URL=https://openrouter.ai/api/v1 KYNSKA_EVAL_API_KEY=... npm run evals -- --model anthropic/claude-sonnet-5.5
+KYNSKA_EVAL_BASE_URL=https://api.example.com/v1 KYNSKA_EVAL_API_KEY=... npm run evals -- --model <model>
 ```
 
 Any OpenAI-compatible API works. Results go to `out/evals/<run>/`: `summary.md`,

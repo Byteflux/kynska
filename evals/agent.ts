@@ -12,7 +12,9 @@ import { formatEntry, type ReferenceIndex } from '../src/reference/lookup.ts';
 
 export type Condition = 'baseline' | 'kynska';
 
-export type ModelConfig = { baseUrl: string; apiKey: string; model: string };
+/** `budgetMs`: wall-clock time after which a kynska run stops taking turns and
+ * is asked for its final code, as when it runs out of turns. */
+export type ModelConfig = { baseUrl: string; apiKey: string; model: string; budgetMs?: number };
 
 export type AgentResult = { code: string; turns: number; toolCalls: number; tokens: number; transcript: unknown[] };
 
@@ -89,23 +91,34 @@ export async function runTool(args: Record<string, any>, reference: ReferenceInd
   }
 }
 
+/** Room for a reasoning model's thinking as well as its reply: at 4096,
+ * GLM-5.3 spent every token reasoning on half the tasks and wrote no code. */
+const MAX_REPLY_TOKENS = 16384;
+
 async function complete(config: ModelConfig, messages: Message[], tools: boolean): Promise<{ message: Message; tokens: number }> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
+    let data: { choices: { message: Message; finish_reason?: string }[]; usage?: { total_tokens?: number } };
     try {
       const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({ model: config.model, messages, temperature: 0, max_tokens: 4096, ...(tools ? { tools: [TOOL] } : {}) }),
-        signal: AbortSignal.timeout(180_000),
+        body: JSON.stringify({ model: config.model, messages, temperature: 0, max_tokens: MAX_REPLY_TOKENS, ...(tools ? { tools: [TOOL] } : {}) }),
+        signal: AbortSignal.timeout(600_000),
       });
       if (!response.ok) throw new Error(`${response.status} ${(await response.text()).slice(0, 300)}`);
-      const data = (await response.json()) as { choices: { message: Message }[]; usage?: { total_tokens?: number } };
-      return { message: data.choices[0].message, tokens: data.usage?.total_tokens ?? 0 };
+      data = await response.json();
     } catch (error) {
       lastError = error;
       await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+      continue;
     }
+    const { message, finish_reason } = data.choices[0];
+    // A reply cut off before any answer is the model's failure, not a network one: no retry.
+    if (finish_reason === 'length' && !message.content?.trim() && !message.tool_calls?.length) {
+      throw new Error(`reply cut off at ${MAX_REPLY_TOKENS} tokens before any answer`);
+    }
+    return { message, tokens: data.usage?.total_tokens ?? 0 };
   }
   throw lastError;
 }
@@ -123,7 +136,9 @@ export async function runAgent(prompt: string, condition: Condition, config: Mod
   ];
   let tokens = 0;
   let toolCalls = 0;
-  for (let turn = 1; turn <= (condition === 'kynska' ? MAX_TURNS : 1); turn++) {
+  const deadline = performance.now() + (config.budgetMs ?? Infinity);
+  let turn = 1;
+  for (; turn <= (condition === 'kynska' ? MAX_TURNS : 1) && (turn === 1 || performance.now() < deadline); turn++) {
     const { message, tokens: used } = await complete(config, messages, condition === 'kynska');
     tokens += used;
     messages.push({ role: 'assistant', content: message.content ?? '', ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}) });
@@ -140,8 +155,9 @@ export async function runAgent(prompt: string, condition: Condition, config: Mod
       messages.push({ role: 'tool', tool_call_id: call.id, content: output });
     }
   }
-  // Out of turns: ask for the final answer without tools.
+  // Out of turns or time: ask for the final answer without tools.
   messages.push({ role: 'user', content: 'Reply now with your final code in one ```js block.' });
   const { message, tokens: used } = await complete(config, messages, false);
-  return { code: extractCode(message.content ?? ''), turns: MAX_TURNS + 1, toolCalls, tokens: tokens + used, transcript: messages };
+  messages.push({ role: 'assistant', content: message.content ?? '' });
+  return { code: extractCode(message.content ?? ''), turns: turn, toolCalls, tokens: tokens + used, transcript: messages };
 }

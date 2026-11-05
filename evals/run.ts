@@ -1,5 +1,5 @@
 // Runs the evals: node evals/run.ts [--agent llm|oracle] [--model M]
-//   [--conditions baseline,kynska] [--transcribe N] [--concurrency N]
+//   [--conditions baseline,kynska] [--transcribe N] [--concurrency N] [--minutes M]
 // The llm agent reads KYNSKA_EVAL_BASE_URL and KYNSKA_EVAL_API_KEY (an
 // OpenAI-compatible API). The oracle agent answers with each task's known
 // solution, to prove the tasks and scoring without a model.
@@ -19,6 +19,8 @@ const { values } = parseArgs({
     conditions: { type: 'string', default: 'baseline,kynska' },
     transcribe: { type: 'string', default: '16' },
     concurrency: { type: 'string', default: '4' },
+    // Per kynska run: after this many minutes it is asked for its final code.
+    minutes: { type: 'string', default: '6' },
   },
 });
 
@@ -31,6 +33,7 @@ const config =
         baseUrl: process.env.KYNSKA_EVAL_BASE_URL ?? '',
         apiKey: process.env.KYNSKA_EVAL_API_KEY ?? '',
         model: values.model ?? '',
+        budgetMs: Number(values.minutes) * 60_000,
       }
     : undefined;
 if (config && (!config.baseUrl || !config.apiKey || !config.model)) {
