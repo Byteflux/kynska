@@ -8,7 +8,7 @@ A loop becomes a piece when layers enter, leave and change on known cycles. Plan
   ```js
   const drums = s("bd*4, [~ cp]*2").bank("RolandTR909")
   const bass = note("<c2 f2 bb1 eb2>").s("sawtooth").lpf(500)
-  const pad = chord("<Cm7 Fm7 Bb7 Ebmaj7>").voicing().s("gm_pad_warm")
+  const pad = chord("<Cm7 Fm7 Bb7 Eb^7>").voicing().s("gm_pad_warm")
   $: arrange([8, pad], [8, stack(pad, bass)], [16, stack(pad, bass, drums)])
   ```
 - **Layers entering and leaving**, each with a mask of 1s (playing) and 0s (silent), one entry per cycle: `drums.mask("<0!8 1!16 0!8>")` stays silent for 8 cycles, plays 16, then stops.

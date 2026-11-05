@@ -1,6 +1,7 @@
 // Sets up a headless Strudel evaluation scope: the pattern language without audio,
 // MIDI or drawing. Output-only methods are replaced with no-ops so code written for
 // the REPL still evaluates, and its events can be queried.
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { registerHooks } from 'node:module';
 import { format } from 'node:util';
 import { initTidal, tidalFunction } from './tidal.ts';
@@ -69,27 +70,33 @@ export type Scope = {
   patternMethods: ReadonlySet<string>;
 };
 
+/** The capture, if any, of the async flow that is logging. */
+const captures = new AsyncLocalStorage<string[]>();
+let intercepting = false;
+
 /**
  * Runs `fn` with console output captured into `logs` instead of printed. Strudel
  * logs freely (banners, "[eval] code updated", caught errors), which would break
- * machine-readable output on stdout.
+ * machine-readable output on stdout. The console is intercepted once, and each
+ * message goes to the capture of the evaluation it came from, so concurrent
+ * evaluations neither mix their logs nor leave the console captured.
  */
-export async function captureConsole<T>(logs: string[], fn: () => Promise<T>): Promise<T> {
-  const methods = ['log', 'info', 'warn', 'error', 'debug'] as const;
-  const saved = methods.map((m) => console[m]);
-  for (const m of methods) {
-    console[m] = (...args: unknown[]) => {
-      // format() swallows the "%c" style marker Strudel's logger() uses; keep it
-      // as a prefix so engineMessages() can tell Strudel's messages apart.
-      const styled = typeof args[0] === 'string' && args[0].startsWith('%c');
-      logs.push(`${styled ? '%c' : ''}${format(...args)}`);
-    };
+export function captureConsole<T>(logs: string[], fn: () => Promise<T>): Promise<T> {
+  if (!intercepting) {
+    intercepting = true;
+    for (const m of ['log', 'info', 'warn', 'error', 'debug'] as const) {
+      const original = console[m].bind(console);
+      console[m] = (...args: unknown[]) => {
+        const sink = captures.getStore();
+        if (!sink) return original(...args);
+        // format() swallows the "%c" style marker Strudel's logger() uses; keep it
+        // as a prefix so engineMessages() can tell Strudel's messages apart.
+        const styled = typeof args[0] === 'string' && args[0].startsWith('%c');
+        sink.push(`${styled ? '%c' : ''}${format(...args)}`);
+      };
+    }
   }
-  try {
-    return await fn();
-  } finally {
-    methods.forEach((m, i) => (console[m] = saved[i]));
-  }
+  return captures.run(logs, fn);
 }
 
 /**

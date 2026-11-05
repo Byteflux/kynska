@@ -12,9 +12,9 @@ Build the music **layer by layer**, one `$:` line per layer, and prove each laye
    $: s("[~ hh]*4").bank("RolandTR909").gain(0.6)
    ```
    Euclidean rhythms: `"bd(3,8)"`; rests `~`; repeat `!`; weight `@`. Mini-notation page: `docs/learn/mini-notation.md`.
-3. **Harmony.** One chord per cycle: `chord("<Cm7 Fm7 Bb7 Ebmaj7>").voicing()`, with a sound such as `.s("gm_epiano1")`. Voicings page: `docs/understand/voicings.md`.
+3. **Harmony.** One chord per cycle: `chord("<Cm7 Fm7 Bb7 Eb^7>").voicing()`, with a sound such as `.s("gm_epiano1")`. Chord symbols follow Strudel's voicing dictionary: a major seventh is `^7` (`Eb^7`), not `maj7`; an unknown symbol plays nothing for that chord and `check` warns `engine-warning`. Voicings page: `docs/understand/voicings.md`.
 4. **Bass, following the chord roots**, on the same cycle boundaries:
-   `note("<c2 f2 bb1 eb2>").s("sawtooth").lpf(500)` or scale degrees, `n("<0 3 6 2>").scale("C2:minor")`.
+   `note("<c2 f2 bb1 eb2>").s("sawtooth").lpf(500)` or scale degrees, `n("<0 3 6 2>").scale("C2:minor")`. For a rhythm on each root use `.ply(8)` (eight eighths per root); `"<c2 f2 bb1 eb2>*8"` instead changes root on every eighth.
 5. **Melody.** Scale degrees keep it in key: `n("0 2 4 <7 9>").scale("C4:minor").s("triangle")`. A scale without an octave (`"C:minor"`) starts at octave 3.
 6. **Sound design.** Filters (`lpf`, `hpf`), envelopes (`attack decay sustain release`), space (`room`, `delay`). Pages: `docs/learn/synths.md`, `docs/learn/effects.md`, `docs/learn/samples.md`.
 7. **Variation**, so it does not loop identically: `.lastOf(4, x => x.fast(2))`, `.sometimes(x => x.ply(2))`, `.degradeBy(0.2)`, `<>` alternation.
