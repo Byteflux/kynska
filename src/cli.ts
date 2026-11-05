@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -34,6 +35,7 @@ Commands:
   analyse <file.wav> [--json]             Measure any WAV file the same way (onsets: detected count)
   reference build                         Fetch the pinned Strudel source and build out/reference.json
   docs build                              Build out/reference.json, the docs pages, llms.txt and llms-full.txt
+  docs path                               Print where the built docs are (llms.txt, llms-full.txt, pages, reference.md)
   upstream                                Compare the pinned Strudel with its latest release and main
 
 Code is read from a file, or from stdin when the file is "-" or omitted. It is JavaScript,
@@ -197,7 +199,19 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case 'docs': {
-      if (args[0] !== 'build') throw new UsageError('usage: kynska docs build');
+      if (args[0] === 'path') {
+        // Where the generated docs are, so an agent working elsewhere can read them.
+        const paths = {
+          llms: join(OUT_DIR, 'llms.txt'),
+          llmsFull: join(OUT_DIR, 'llms-full.txt'),
+          pages: join(OUT_DIR, 'docs'),
+          reference: join(OUT_DIR, 'docs', 'reference.md'),
+        };
+        if (!existsSync(paths.llms)) throw new Error('The docs are not built yet. Build them with: kynska docs build');
+        print(paths, () => Object.values(paths).join('\n'));
+        return 0;
+      }
+      if (args[0] !== 'build') throw new UsageError('usage: kynska docs build | kynska docs path');
       const result = await buildDocs();
       console.error(formatDocsResult(result));
       return 0;

@@ -63,8 +63,16 @@ function loadTidal(): Promise<any> {
       resolve: (specifier, context, next) => (specifier === 'hs2js' ? { url: hs2js, shortCircuit: true } : next(specifier, context)),
     });
     (await import(hs2js)).setBase(`${await grammarDir()}/`);
-    // tidal() looks Haskell names up on `window` and initTidal() defines d1..d9 there.
-    (globalThis as any).window ??= globalThis;
+    // tidal() looks Haskell names up on `window` and initTidal() defines d1..d9
+    // there. A stand-in that inherits the global scope (where Strudel's functions
+    // are) and has no-op event methods, for code that sees `window` and assumes a
+    // browser (Strudel's keyboard input, superdough's messages).
+    if (!('window' in globalThis)) {
+      const window = Object.create(globalThis);
+      window.addEventListener = () => {};
+      window.removeEventListener = () => {};
+      (globalThis as any).window = window;
+    }
     return import(pathToFileURL(join(source, 'packages', 'tidal', 'tidal.mjs')).href);
   })();
   return loading;
