@@ -22,7 +22,8 @@ export type ReferenceEntry = {
 
 export type Reference = {
   schema: 1;
-  strudel: { version: string; commit: string; repository: string };
+  /** tagsFrom: the later commit whose @tags filled in categories, when strudel.json names one. */
+  strudel: { version: string; commit: string; repository: string; tagsFrom?: string };
   functions: ReferenceEntry[];
   /**
    * Names strudel.cc has in scope from packages Kynska cannot run headlessly

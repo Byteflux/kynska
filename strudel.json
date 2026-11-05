@@ -2,5 +2,6 @@
   "version": "1.2.6",
   "repository": "https://codeberg.org/uzu/strudel.git",
   "tag": "@strudel/core@1.2.6",
-  "commit": "d198910a86fcaecd658ef528bfa6d7884e93490b"
+  "commit": "d198910a86fcaecd658ef528bfa6d7884e93490b",
+  "tagsCommit": "530e9630bfee3f1b7b770f3f243b338495934e9d"
 }

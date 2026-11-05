@@ -1,4 +1,5 @@
-// Score onset detection on rendered patterns: onsets found and extras.
+// Scores onset detection on rendered patterns (onsets found, false onsets) and
+// fails when it falls behind its tuning: node scripts/score-onsets.ts
 import { detectOnsets, matchOnsets } from '../src/audio/analyse.ts';
 import { renderCode } from '../src/audio/render.ts';
 
@@ -32,4 +33,7 @@ for (const code of patterns) {
   console.log(`${m.matched}/${m.expected} +${m.extra.length}`.padEnd(10), code);
 }
 console.log(`total ${matched}/${expected}, ${extra} extra`);
-process.exit(0);
+// Tuned at 128/128 found with 2 extra: fail on a clear regression.
+const ok = matched / expected >= 0.97 && extra <= 6;
+if (!ok) console.log('Onset detection got worse than its tuning (at least 97% found, at most 6 extra).');
+process.exit(ok ? 0 : 1);

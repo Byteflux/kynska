@@ -13,6 +13,8 @@ import { diffCode, formatDiff } from './patterns/diff.ts';
 import { runPattern } from './patterns/events.ts';
 import { buildReference } from './reference/build.ts';
 import { formatEntry, loadReference, MissingReferenceError, ReferenceIndex } from './reference/lookup.ts';
+import { readPin } from './reference/pin.ts';
+import { formatUpstream, upstreamStatus } from './reference/upstream.ts';
 
 const USAGE = `Usage: kynska <command> [options]
 
@@ -24,12 +26,14 @@ Commands:
                                           Compare the events of two versions (default 1 cycle)
   lookup <name> [--json]                  Show a function from the Strudel reference
   lookup --tag <tag> | --module <module>  List functions by tag or module
+  lookup --tags                           List the tags and how many functions have each
   render [file] [--cycles N] [--out file.wav] [--tail S] [--sample-rate R] [--json]
-                                          Render to a WAV file (default 4 cycles, out/render.wav)
+                                          Render to a WAV file (default 4 cycles, ./render.wav)
                                           and measure it: level, loudness, clipping, silence, onsets
   analyse <file.wav> [--json]             Measure any WAV file the same way (onsets: detected count)
   reference build                         Fetch the pinned Strudel source and build out/reference.json
   docs build                              Build out/reference.json, the docs pages, llms.txt and llms-full.txt
+  upstream                                Compare the pinned Strudel with its latest release and main
 
 Code is read from a file, or from stdin when the file is "-" or omitted.
 Exit codes: 0 success; 1 errors found (check), a difference (diff), an event that failed to
@@ -78,6 +82,7 @@ async function main(argv: string[]): Promise<number> {
       'sample-rate': { type: 'string' },
       json: { type: 'boolean', default: false },
       tag: { type: 'string' },
+      tags: { type: 'boolean', default: false },
       module: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -123,6 +128,13 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'lookup': {
       const index = new ReferenceIndex(await loadReference());
+      if (values.tags) {
+        const counts = new Map<string, number>();
+        for (const f of index.reference.functions) for (const t of f.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+        const sorted = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+        print(Object.fromEntries(sorted), () => sorted.map(([t, n]) => `${t} (${n})`).join('\n') || 'No tags in this reference.');
+        return 0;
+      }
       if (values.tag || values.module) {
         const entries = values.tag ? index.withTag(values.tag) : index.inModule(values.module!);
         print(entries, () =>
@@ -152,7 +164,7 @@ async function main(argv: string[]): Promise<number> {
         throw new UsageError(`--sample-rate must be a whole number of Hz from 8000 to 192000, got "${values['sample-rate']}"`);
       }
       const rendered = await renderCode(await readCode(args[0]), { cycles: cyclesOf(values.cycles, 4), tail, sampleRate });
-      const file = values.out ?? join(OUT_DIR, 'render.wav');
+      const file = values.out ?? 'render.wav';
       await mkdir(dirname(file), { recursive: true });
       await writeFile(file, encodeWav(rendered.channels, rendered.sampleRate));
       const report = reportRender(rendered, relative(process.cwd(), file) || file);
@@ -165,6 +177,11 @@ async function main(argv: string[]): Promise<number> {
       const stats = analyse(channels, sampleRate);
       const onsets = detectOnsets(channels, sampleRate);
       print({ stats, onsets }, () => `${formatStats(stats)}\nOnsets: ${onsets.length} detected`);
+      return 0;
+    }
+    case 'upstream': {
+      const status = await upstreamStatus(await readPin());
+      print(status, () => formatUpstream(status));
       return 0;
     }
     case 'docs': {
