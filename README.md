@@ -95,8 +95,9 @@ translation is left out too.
 `render` runs superdough, Strudel's audio engine, offline in Node through
 [node-web-audio-api](https://github.com/ircam-ismm/node-web-audio-api), the same
 way strudel.cc's "export" does. Each render runs in its own worker thread and is
-capped at 600 seconds of audio. A render takes about three quarters of the audio's
-length (a 2-minute piece, about 90 s), so `--from`/`--to` drafts one section, and
+capped at 600 seconds of audio. A render takes from a fifth to three quarters of the
+audio's length, depending on the code (a 2-minute piece, 25 to 90 s), so `--from`/`--to`
+drafts one section, and
 `--layers` renders up to three layers at once.
 
 - **Layers**: each `$:` or named label (`bass:`) is a layer. `--layers` renders each

@@ -23,7 +23,7 @@ You cannot hear the music, so every claim you make about it needs **evidence** f
 
 ## Time
 
-A render takes about three quarters of the audio's length: a 2-minute piece, about 90 s. Spend that on the final render only:
+A render takes from a fifth to three quarters of the audio's length, depending on the code: a 2-minute piece, 25 to 90 s. Spend that on the final render only:
 
 - **Draft one section at a time**: `kynska render song.js --from 20 --to 32` renders cycles 20 to 32 in seconds.
 - **Measure balance in one run**: `--layers --sections <form>` renders every layer alone and reports each layer's loudness in each section, next to the mix.

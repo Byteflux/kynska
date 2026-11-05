@@ -132,7 +132,7 @@ export async function serveMcp(): Promise<void> {
     'render',
     {
       description:
-        "Render Strudel code to a WAV file with Strudel's audio engine and measure it: peak (and where), loudness (LUFS), clipping, silence, and whether sound starts at the event times; per section with sections, per layer with layers. A full render takes about 3/4 of the audio's length: draft one section with from/to.",
+        "Render Strudel code to a WAV file with Strudel's audio engine and measure it: peak (and where), loudness (LUFS), clipping, silence, and whether sound starts at the event times; per section with sections, per layer with layers. A full render takes up to 3/4 of the audio's length: draft one section with from/to.",
       inputSchema: {
         ...source,
         out: z.string().describe('Path of the WAV file to write'),

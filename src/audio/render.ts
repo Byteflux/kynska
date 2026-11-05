@@ -16,7 +16,7 @@ export type RenderOptions = {
   tail?: number;
   /** Refuse renders longer than this many seconds. Default 600. */
   maxSeconds?: number;
-  /** Give up after this many seconds of wall time. Default 600: a 2-minute piece takes about 90 s. */
+  /** Give up after this many seconds of wall time. Default 600: a 2-minute piece takes 25 to 90 s. */
   timeout?: number;
   /** 'mondo' for code written entirely in Mondo notation. Default 'js'. */
   language?: Language;
