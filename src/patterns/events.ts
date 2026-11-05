@@ -21,7 +21,34 @@ type Hap = {
   value: unknown;
   hasOnset(): boolean;
   show(compact?: boolean): string;
+  withValue(f: (value: unknown) => unknown): Hap;
 };
+
+/**
+ * Upstream's show() serializes the value with JSON.stringify, which throws on a
+ * control holding a pattern or fraction (BigInt inside), as from
+ * `.set({ sustain: "<0 0.1>" })`, where the string is not parsed. Such a
+ * control is shown by its type, e.g. `sustain:<Pattern>`, so the event still lists.
+ */
+function showHap(hap: Hap): string {
+  try {
+    return hap.show(true);
+  } catch {
+    const plain = (v: unknown): unknown => {
+      if (typeof v === 'bigint') return String(v);
+      if (v && typeof v === 'object') {
+        // The upstream build is minified, so tell values apart by shape, not class name.
+        if (typeof (v as any).queryArc === 'function') return '<Pattern>';
+        if (typeof (v as any).toFraction === 'function') return (v as any).toFraction();
+        if (Array.isArray(v)) return v.map(plain);
+        if (Object.getPrototypeOf(v) !== Object.prototype) return '<object>';
+        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, plain(x)]));
+      }
+      return v;
+    };
+    return hap.withValue(plain).show(true);
+  }
+}
 
 /** The events that start within `cycles` cycles of `pattern`, from cycle `from`. */
 export function eventsOf(pattern: any, cycles = 1, from = 0): PatternEvent[] {
@@ -37,7 +64,7 @@ export function eventsOf(pattern: any, cycles = 1, from = 0): PatternEvent[] {
       begin: hap.whole!.begin.toFraction(),
       end: hap.whole!.end.toFraction(),
       value: hap.value,
-      show: hap.show(true),
+      show: showHap(hap),
     }));
 }
 

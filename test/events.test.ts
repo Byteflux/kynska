@@ -42,6 +42,13 @@ describe('queryEvents', () => {
     expect(timings(events)).toEqual([['0', '2']]);
   });
 
+  // Regression: upstream show() threw "Do not know how to serialize a BigInt"
+  // on a control holding a pattern, so listing the events failed outright.
+  it('lists events whose control holds a pattern, naming it', async () => {
+    const { events } = await runPattern('note("c3 e3").set({ decay: 0.2, sustain: "<0 0.1>" })');
+    expect(events.map((e) => e.show)).toEqual(['[ 0/1 → 1/2 | note:c3 decay:0.2 sustain:<Pattern> ]', '[ 1/2 → 1/1 | note:e3 decay:0.2 sustain:<Pattern> ]']);
+  });
+
   it('rejects code that calls an unknown function', async () => {
     await expect(queryEvents('nonsense("bd")')).rejects.toThrow();
   });
