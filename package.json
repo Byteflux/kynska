@@ -1,6 +1,6 @@
 {
   "name": "kynska",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Docs, skills and tooling for agents that make music with Strudel",
   "license": "MIT",
@@ -16,9 +16,11 @@
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
     "check:examples": "node scripts/check-examples.ts",
-    "check:docs": "node scripts/check-docs.ts"
+    "check:docs": "node scripts/check-docs.ts",
+    "evals": "node evals/run.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@strudel/core": "1.2.6",
     "@strudel/mini": "1.2.6",
     "@strudel/mondo": "1.1.6",
@@ -37,7 +39,8 @@
     "remark-stringify": "11.0.0",
     "superdough": "1.2.6",
     "unified": "11.0.5",
-    "web-tree-sitter": "0.24.7"
+    "web-tree-sitter": "0.24.7",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/mdast": "^4.0.4",

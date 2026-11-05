@@ -47,7 +47,7 @@ describe('agent helpers', () => {
   it('runs kynska commands as the tool', async () => {
     const reference = new ReferenceIndex(smallReference);
     expect(await runTool({ command: 'events', code: 's("bd sd")' }, reference)).toContain('[ 0/1 → 1/2 | s:bd ]');
-    expect(await runTool({ command: 'check', code: 's("bd").lpff(2)' }, reference)).toMatch(/unknown-method.*Did you mean lpf/);
+    expect(await runTool({ command: 'check', code: 's("bd").lpff(2)' }, reference)).toMatch(/unknown-method.*Did you mean `lpf`/);
     expect(await runTool({ command: 'lookup', name: 'cutoff' }, reference)).toContain('## lpf');
     expect(await runTool({ command: 'read', file: '../../etc/passwd' }, reference)).toMatch(/^error:/);
   });

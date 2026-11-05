@@ -1,0 +1,12 @@
+{
+  "name": "kynska",
+  "version": "0.1.0",
+  "description": "Make music with Strudel and prove it without listening: a skill for composing, arranging, mixing, translating Tidal and debugging, with the kynska tools (check, events, diff, lookup, render) as an MCP server.",
+  "author": {
+    "name": "Matthew Harris",
+    "email": "byte@byteflux.net"
+  },
+  "repository": "https://github.com/Byteflux/kynska",
+  "license": "MIT",
+  "keywords": ["strudel", "tidalcycles", "music", "live-coding"]
+}

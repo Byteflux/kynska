@@ -1,0 +1,17 @@
+{
+  "name": "kynska",
+  "owner": {
+    "name": "Matthew Harris",
+    "email": "byte@byteflux.net"
+  },
+  "metadata": {
+    "description": "Kynska: docs, skills and tooling for agents that make music with Strudel."
+  },
+  "plugins": [
+    {
+      "name": "kynska",
+      "source": "./",
+      "description": "Make music with Strudel and prove it without listening: the strudel skill and the kynska tools as an MCP server."
+    }
+  ]
+}

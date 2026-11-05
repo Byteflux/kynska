@@ -56,6 +56,24 @@ export type CheckOptions = {
 
 type AnyNode = Node & Record<string, any>;
 
+/** One diagnostic as a line: "file:line:column: severity [code] message. Did you mean ...?" */
+export function formatDiagnostic(d: Diagnostic, file = '<stdin>'): string {
+  const where = d.line ? `${file}:${d.line}:${d.column ?? 1}` : file;
+  const hint = d.suggestions?.length ? ` Did you mean ${d.suggestions.map((s) => `\`${s}\``).join(', ')}?` : '';
+  return `${where}: ${d.severity} [${d.code}] ${d.message}${hint}`;
+}
+
+/** A check result as `kynska check` prints it: the diagnostics, then a verdict line. */
+export function formatCheck(result: CheckResult, file = '<stdin>'): string {
+  const lines = result.diagnostics.map((d) => formatDiagnostic(d, file));
+  const errors = result.diagnostics.filter((d) => d.severity === 'error').length;
+  const warnings = result.diagnostics.length - errors;
+  const counts = `${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'}`;
+  const facts = result.events !== undefined ? `; ${result.events} events, ${result.cps} cycles per second` : '';
+  lines.push(`${result.ok ? 'OK' : 'FAILED'}: ${counts}${facts}`);
+  return lines.join('\n');
+}
+
 function patternNames(node: AnyNode | null | undefined, into: Set<string>) {
   if (!node) return;
   switch (node.type) {

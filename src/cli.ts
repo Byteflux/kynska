@@ -9,7 +9,7 @@ import { formatReport, formatStats, reportRender } from './audio/report.ts';
 import { decodeWav, encodeWav } from './audio/wav.ts';
 import { buildDocs, formatDocsResult } from './docs/build.ts';
 import { OUT_DIR, ROOT } from './paths.ts';
-import { checkCode, type Diagnostic } from './patterns/check.ts';
+import { checkCode, formatCheck } from './patterns/check.ts';
 import { diffCode, formatDiff } from './patterns/diff.ts';
 import { languageOf, type Language } from './patterns/evaluate.ts';
 import { runPattern } from './patterns/events.ts';
@@ -37,6 +37,7 @@ Commands:
   docs build                              Build out/reference.json, the docs pages, llms.txt and llms-full.txt
   docs path                               Print where the built docs are (llms.txt, llms-full.txt, pages, reference.md)
   upstream                                Compare the pinned Strudel with its latest release and main
+  mcp                                     Serve check, events, diff, lookup, render and docs_path as MCP tools (stdio)
 
 Code is read from a file, or from stdin when the file is "-" or omitted. It is JavaScript,
 which can use mondo\`...\` and tidal\`...\` inline; --mondo (or a .mondo file) reads it as
@@ -68,12 +69,6 @@ async function optionalReference(): Promise<ReferenceIndex | undefined> {
     if (error instanceof MissingReferenceError) return undefined;
     throw error;
   }
-}
-
-function formatDiagnostic(d: Diagnostic, file: string): string {
-  const where = d.line ? `${file}:${d.line}:${d.column ?? 1}` : file;
-  const hint = d.suggestions?.length ? ` Did you mean ${d.suggestions.map((s) => `\`${s}\``).join(', ')}?` : '';
-  return `${where}: ${d.severity} [${d.code}] ${d.message}${hint}`;
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -116,15 +111,7 @@ async function main(argv: string[]): Promise<number> {
         cycles: cyclesOf(values.cycles, 4),
         language: language(args[0]),
       });
-      print(result, () => {
-        const lines = result.diagnostics.map((d) => formatDiagnostic(d, file));
-        const errors = result.diagnostics.filter((d) => d.severity === 'error').length;
-        const warnings = result.diagnostics.length - errors;
-        const counts = `${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'}`;
-        const facts = result.events !== undefined ? `; ${result.events} events, ${result.cps} cycles per second` : '';
-        lines.push(`${result.ok ? 'OK' : 'FAILED'}: ${counts}${facts}`);
-        return lines.join('\n');
-      });
+      print(result, () => formatCheck(result, file));
       return result.ok ? 0 : 1;
     }
     case 'diff': {
@@ -192,6 +179,10 @@ async function main(argv: string[]): Promise<number> {
       const onsets = detectOnsets(channels, sampleRate);
       print({ stats, onsets }, () => `${formatStats(stats)}\nOnsets: ${onsets.length} detected`);
       return 0;
+    }
+    case 'mcp': {
+      await (await import('./mcp.ts')).serveMcp();
+      return new Promise<number>(() => {}); // serves until stdin closes
     }
     case 'upstream': {
       const status = await upstreamStatus(await readPin());

@@ -5,7 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import { join, normalize } from 'node:path';
 import { OUT_DIR, ROOT } from '../src/paths.ts';
-import { checkCode } from '../src/patterns/check.ts';
+import { checkCode, formatCheck } from '../src/patterns/check.ts';
 import { diffCode, formatDiff } from '../src/patterns/diff.ts';
 import { runPattern } from '../src/patterns/events.ts';
 import { formatEntry, type ReferenceIndex } from '../src/reference/lookup.ts';
@@ -60,12 +60,8 @@ export async function runTool(args: Record<string, any>, reference: ReferenceInd
   const cycles = typeof args.cycles === 'number' && args.cycles > 0 ? Math.min(args.cycles, 64) : undefined;
   try {
     switch (args.command) {
-      case 'check': {
-        const r = await checkCode(String(args.code ?? ''), { reference, cycles: cycles ?? 4 });
-        const lines = r.diagnostics.map((d) => `${d.line ? `${d.line}:${d.column}: ` : ''}${d.severity} [${d.code}] ${d.message}${d.suggestions ? ` Did you mean ${d.suggestions.join(', ')}?` : ''}`);
-        lines.push(`${r.ok ? 'OK' : 'FAILED'}${r.events !== undefined ? `; ${r.events} events, ${r.cps} cycles per second` : ''}`);
-        return lines.join('\n');
-      }
+      case 'check':
+        return formatCheck(await checkCode(String(args.code ?? ''), { reference, cycles: cycles ?? 4 }), 'code');
       case 'events': {
         const run = await runPattern(String(args.code ?? ''), cycles ?? 1);
         return [...run.messages.map((m) => `strudel: ${m}`), ...run.events.map((e) => e.show), `(${run.events.length} events, ${run.cps} cycles per second)`].join('\n');

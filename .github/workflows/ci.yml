@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # The pinned Strudel source, sample banks, soundfonts and the Tidal grammar,
+      # fetched once per Strudel pin.
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: strudel-${{ hashFiles('strudel.json') }}
+
+      - run: npm ci
+
+      - name: Type check and tests
+        run: npm run check
+
+      - name: Build docs and reference
+        run: node src/cli.ts docs build
+
+      - name: check on every documented example
+        run: npm run check:examples
+
+      - name: check on every docs code block
+        run: npm run check:docs
+
+      - name: Onset detection
+        run: node scripts/score-onsets.ts
+
+      - name: Evals (oracle)
+        run: node evals/run.ts --agent oracle
+
+      - name: Plugin manifests
+        run: |
+          node -e 'for (const f of [".claude-plugin/plugin.json", ".claude-plugin/marketplace.json", ".mcp.json"]) JSON.parse(require("fs").readFileSync(f, "utf8"))'
