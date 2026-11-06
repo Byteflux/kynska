@@ -1,5 +1,6 @@
 // Runs the evals: node evals/run.ts [--agent llm|oracle] [--model M]
-//   [--conditions baseline,kynska] [--transcribe N] [--concurrency N] [--minutes M] [--repeats N]
+//   [--conditions baseline,kynska] [--kinds transcribe,describe,produce,recreate]
+//   [--transcribe N] [--concurrency N] [--minutes M] [--repeats N]
 //   [--temperature T] [--effort low|medium|high|...|default] [--reasoning-tokens N]
 // The llm agent reads KYNSKA_EVAL_BASE_URL and KYNSKA_EVAL_API_KEY (an
 // OpenAI-compatible API). The oracle agent answers with each task's known
@@ -11,7 +12,7 @@ import { parseArgs } from 'node:util';
 import { OUT_DIR } from '../src/paths.ts';
 import { loadReference, ReferenceIndex } from '../src/reference/lookup.ts';
 import { runAgent, type AgentCosts, type Condition } from './agent.ts';
-import { describeTasks, produceTasks, scoreTask, transcribeTasks, type Task } from './tasks.ts';
+import { describeTasks, produceTasks, recreateTasks, scoreTask, transcribeTasks, type Task } from './tasks.ts';
 import { emptyCosts } from './render.ts';
 import { summarize, type Row } from './summary.ts';
 import { pool } from '../src/patterns/layers.ts';
@@ -22,6 +23,7 @@ const { values } = parseArgs({
     model: { type: 'string' },
     conditions: { type: 'string', default: 'baseline,kynska' },
     transcribe: { type: 'string', default: '16' },
+    kinds: { type: 'string', default: 'transcribe,describe,produce,recreate' },
     concurrency: { type: 'string', default: '4' },
     repeats: { type: 'string', default: '1' },
     // Per kynska run: after this many minutes it is asked for its final code.
@@ -39,7 +41,14 @@ const concurrency = Number(values.concurrency);
 if (!Number.isInteger(repeats) || repeats < 1 || !Number.isInteger(concurrency) || concurrency < 1) throw new Error('repeats and concurrency must be positive integers');
 if (!['llm', 'oracle'].includes(values.agent!)) throw new Error('agent must be llm or oracle');
 const reference = new ReferenceIndex(await loadReference());
-const tasks: Task[] = [...(await transcribeTasks(reference.reference, Number(values.transcribe))), ...describeTasks, ...produceTasks];
+const kinds = new Set(values.kinds!.split(','));
+if ([...kinds].some((k) => !['transcribe', 'describe', 'produce', 'recreate'].includes(k))) throw new Error('kinds must be from transcribe,describe,produce,recreate');
+const tasks: Task[] = [
+  ...(kinds.has('transcribe') ? await transcribeTasks(reference.reference, Number(values.transcribe)) : []),
+  ...(kinds.has('describe') ? describeTasks : []),
+  ...(kinds.has('produce') ? produceTasks : []),
+  ...(kinds.has('recreate') ? recreateTasks() : []),
+];
 const conditions = (values.agent === 'oracle' ? ['oracle'] : values.conditions!.split(',')) as (Condition | 'oracle')[];
 if (values.agent !== 'oracle' && conditions.some((c) => c !== 'baseline' && c !== 'kynska')) throw new Error('conditions must be baseline,kynska');
 const config =
@@ -63,7 +72,8 @@ if (config && (!config.baseUrl || !config.apiKey || !config.model)) {
 const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${values.agent}${config ? `-${config.model.replace(/[^\w.-]+/g, '_')}` : ''}`;
 const dir = join(OUT_DIR, 'evals', runId);
 await mkdir(dir, { recursive: true });
-console.log(`${tasks.length} tasks (${tasks.filter((t) => t.kind === 'transcribe').length} transcribe, ${describeTasks.length} describe, ${produceTasks.length} produce) x ${conditions.join(', ')} x ${repeats} repeats -> ${dir}`);
+const count = (kind: Task['kind']) => tasks.filter((t) => t.kind === kind).length;
+console.log(`${tasks.length} tasks (${count('transcribe')} transcribe, ${count('describe')} describe, ${count('produce')} produce, ${count('recreate')} recreate) x ${conditions.join(', ')} x ${repeats} repeats -> ${dir}`);
 
 const rows: Row[] = [];
 const jobs = conditions.flatMap((condition) => tasks.flatMap((task) => Array.from({ length: repeats }, (_, i) => ({ task, condition, repeat: i + 1 }))));
@@ -80,7 +90,7 @@ async function runJob({ task, condition, repeat }: typeof jobs[number]) {
     const answer =
       condition === 'oracle'
         ? { code: task.solution, transcript: [] as unknown[] }
-        : await runAgent(task.prompt, condition, config!, reference, costs);
+        : await runAgent(task.prompt, condition, config!, reference, costs, task.kind === 'recreate' ? task.reference : undefined);
     const score = answer.code.trim() ? await scoreTask(task, answer.code, costs) : { score: 0, detail: 'no answer' };
     row = { task: task.id, kind: task.kind, condition, repeat, ...score, ...costs, seconds: ownSeconds(started, costs), code: answer.code, failedToAnswer: !answer.code.trim() };
     if (answer.transcript.length) await writeFile(join(dir, `${condition}--${task.id.replace(/\//g, '--')}--${repeat}.json`), JSON.stringify(answer.transcript, null, 2));

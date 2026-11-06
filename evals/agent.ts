@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { join, normalize } from 'node:path';
 import { OUT_DIR, ROOT } from '../src/paths.ts';
 import { checkCode, formatCheck } from '../src/patterns/check.ts';
+import { compareToReference, formatCompare } from '../src/patterns/compare.ts';
+import { formatNotes, parseBars, readReferenceScore } from '../src/score/reference-score.ts';
 import { diffCode, formatDiff } from '../src/patterns/diff.ts';
 import { runPattern } from '../src/patterns/events.ts';
 import { formatForm, formOf } from '../src/patterns/form.ts';
@@ -44,7 +46,7 @@ async function kynskaSystem(): Promise<string> {
   const skill = (await readFile(join(SKILL_DIR, 'SKILL.md'), 'utf8')).replace(/^---[\s\S]*?---\n/, '');
   return `${BASELINE_SYSTEM}
 
-In this environment you have no shell; the kynska CLI is the \`kynska\` tool, which takes code inline instead of a file. Reference files beside the skill (compose.md, arrange.md, mix.md, tidal.md, debug.md) and docs pages (docs/learn/mini-notation.md, ...) are read with its "read" command. Use render to measure audio, layers and sections, draft with from/to, and master to a LUFS target. Each render is capped at 32 seconds including tails and uses cached sounds only. WAVs are temporary. When done, reply with the final code in one \`\`\`js block.
+In this environment you have no shell; the kynska CLI is the \`kynska\` tool, which takes code inline instead of a file. When a task comes with a reference song, its MIDI file is already loaded: \`notes\` and \`compare\` use it, with no file argument. Reference files beside the skill (compose.md, arrange.md, mix.md, tidal.md, recreate.md, debug.md) and docs pages (docs/learn/mini-notation.md, ...) are read with its "read" command. Use render to measure audio, layers and sections, draft with from/to, and master to a LUFS target. Each render is capped at 32 seconds including tails and uses cached sounds only. WAVs are temporary. When done, reply with the final code in one \`\`\`js block.
 
 ${skill}`;
 }
@@ -53,12 +55,16 @@ const TOOL = {
   type: 'function',
   function: {
     name: 'kynska',
-    description: 'Run a kynska command on Strudel code: check, events, diff, form, render, lookup, or read a skill or docs file.',
+    description: "Run a kynska command on Strudel code: check, events, diff, form, render, lookup, or read a skill or docs file; when the task has a reference MIDI file, notes reads it and compare checks code against it.",
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', enum: ['check', 'events', 'diff', 'form', 'render', 'lookup', 'read'] },
-        code: { type: 'string', description: 'Strudel code, for check, events, form and render' },
+        command: { type: 'string', enum: ['check', 'events', 'diff', 'form', 'render', 'notes', 'compare', 'lookup', 'read'] },
+        code: { type: 'string', description: 'Strudel code, for check, events, form, render and compare' },
+        bars: { type: 'string', description: 'for notes/compare: reference bars, e.g. "1-4"' },
+        beatsPerCycle: { type: 'number', description: 'for compare: quarter notes per cycle (default: found)' },
+        offset: { type: 'number', description: 'for compare: cycle where the first compared bar starts (default: found)' },
+        transpose: { type: 'number', description: 'for compare: semitones the piece is meant to sound above the reference' },
         sections: { type: 'string', description: 'for form/render: section lengths in cycles, e.g. "intro=4,A=8"' },
         from: { type: 'number', description: 'for render: first cycle, zero-based' },
         to: { type: 'number', description: 'for render: end cycle, exclusive; use to or cycles' },
@@ -77,11 +83,26 @@ const TOOL = {
   },
 };
 
-/** Runs one tool call, returning what the CLI would print. */
-export async function runTool(args: Record<string, any>, reference: ReferenceIndex, costs: RenderCosts = emptyCosts(), directory?: string): Promise<string> {
+/** Runs one tool call, returning what the CLI would print. `midi`: the task's reference song, for notes and compare. */
+export async function runTool(args: Record<string, any>, reference: ReferenceIndex, costs: RenderCosts = emptyCosts(), directory?: string, midi?: Uint8Array): Promise<string> {
   const cycles = typeof args.cycles === 'number' && args.cycles > 0 ? Math.min(args.cycles, 64) : undefined;
+  const number = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : undefined);
   try {
     switch (args.command) {
+      case 'notes':
+      case 'compare': {
+        if (!midi) return `This task has no reference MIDI file for ${args.command}.`;
+        const score = readReferenceScore(midi, 'reference.mid');
+        const bars = args.bars ? parseBars(String(args.bars)) : undefined;
+        if (args.command === 'notes') return formatNotes(score, { bars });
+        const report = await compareToReference(String(args.code ?? ''), score, {
+          bars,
+          quartersPerCycle: number(args.beatsPerCycle),
+          offset: number(args.offset),
+          transpose: number(args.transpose),
+        });
+        return formatCompare(report, score);
+      }
       case 'render':
         return (await evalRender(String(args.code ?? ''), args, costs, directory)).text;
       case 'check':
@@ -110,7 +131,7 @@ export async function runTool(args: Record<string, any>, reference: ReferenceInd
         return await readFile(path, 'utf8');
       }
       default:
-        return `Unknown command "${args.command}"; use check, events, diff, form, render, lookup or read.`;
+        return `Unknown command "${args.command}"; use check, events, diff, form, render, notes, compare, lookup or read.`;
     }
   } catch (error) {
     return `error: ${(error as Error).message}`;
@@ -240,19 +261,21 @@ export function extractCode(text: string): string {
   return blocks.length ? blocks[blocks.length - 1][1].trim() : text.trim();
 }
 
-export async function runAgent(prompt: string, condition: Condition, config: ModelConfig, reference: ReferenceIndex, costs: AgentCosts = { ...emptyCosts(), turns: 0, toolCalls: 0, tokens: 0 }): Promise<AgentResult> {
+/** `midi`: a reference song the task comes with, for the kynska tool's notes and compare. */
+export async function runAgent(prompt: string, condition: Condition, config: ModelConfig, reference: ReferenceIndex, costs: AgentCosts = { ...emptyCosts(), turns: 0, toolCalls: 0, tokens: 0 }, midi?: Uint8Array): Promise<AgentResult> {
   const directory = await mkdtemp(join(tmpdir(), 'kynska-eval-run-'));
   try {
-    return await runAgentTurns(prompt, condition, config, reference, costs, directory);
+    return await runAgentTurns(prompt, condition, config, reference, costs, directory, midi);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 }
 
-async function runAgentTurns(prompt: string, condition: Condition, config: ModelConfig, reference: ReferenceIndex, costs: AgentCosts, directory: string): Promise<AgentResult> {
+async function runAgentTurns(prompt: string, condition: Condition, config: ModelConfig, reference: ReferenceIndex, costs: AgentCosts, directory: string, midi?: Uint8Array): Promise<AgentResult> {
+  const withMidi = condition === 'kynska' && midi ? `${prompt}\n\nThe excerpt is also loaded as a MIDI file for the kynska tool: notes prints it, compare checks code against it.` : prompt;
   const messages: Message[] = [
     { role: 'system', content: condition === 'kynska' ? await kynskaSystem() : BASELINE_SYSTEM },
-    { role: 'user', content: prompt },
+    { role: 'user', content: withMidi },
   ];
   const deadline = performance.now() + (config.budgetMs ?? Infinity);
   let turn = 1;
@@ -271,7 +294,7 @@ async function runAgentTurns(prompt: string, condition: Condition, config: Model
       } catch {
         // leave empty; the tool reports the unknown command
       }
-      const output = (await runTool(args, reference, costs, directory)).slice(0, MAX_TOOL_OUTPUT);
+      const output = (await runTool(args, reference, costs, directory, midi)).slice(0, MAX_TOOL_OUTPUT);
       messages.push({ role: 'tool', tool_call_id: call.id, content: output });
     }
   }

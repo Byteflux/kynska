@@ -12,6 +12,8 @@ import { formatReport, reportRender } from './audio/report.ts';
 import { encodeWav } from './audio/wav.ts';
 import { OUT_DIR } from './paths.ts';
 import { checkCode, formatCheck } from './patterns/check.ts';
+import { compareToReference, formatCompare } from './patterns/compare.ts';
+import { formatNotes, parseBars, readReferenceScore } from './score/reference-score.ts';
 import { diffCode, formatDiff } from './patterns/diff.ts';
 import { languageOf, type Language } from './patterns/evaluate.ts';
 import { runPattern } from './patterns/events.ts';
@@ -176,6 +178,51 @@ export async function serveMcp(): Promise<void> {
       const { code, language } = await codeOf(args);
       const bySection = args.sections ? parseSections(args.sections) : undefined;
       return formatForm(await formOf(code, windowOf(args, 8, bySection).cycles, language, bySection));
+    }),
+  );
+
+  const bars = z.string().optional().describe('Reference bars, e.g. "9-16" (default all)');
+
+  server.registerTool(
+    'notes',
+    {
+      description:
+        "A MIDI file's notes as text, part by part and bar by bar: mini-notation for one cycle per bar where it can be, otherwise beat, notes and length. Read a reference song with it before transcribing it.",
+      inputSchema: { reference: z.string().describe('Path of the MIDI file'), bars, parts: z.array(z.number().int().positive()).optional().describe('Part numbers (default all)') },
+    },
+    tool(async (args) => {
+      const score = readReferenceScore(await readFile(resolve(args.reference)), args.reference);
+      return formatNotes(score, { bars: args.bars ? parseBars(args.bars) : undefined, parts: args.parts });
+    }),
+  );
+
+  server.registerTool(
+    'compare',
+    {
+      description:
+        "How faithfully Strudel code plays a reference MIDI file: notes matched by pitch and onset in beats (tempo reported apart), recall and precision per part and layer, and every changed, missing or extra note by bar and beat. Finds the cycle length and where the reference starts unless given.",
+      inputSchema: {
+        ...source,
+        reference: z.string().describe('Path of the MIDI file'),
+        bars,
+        beatsPerCycle: z.number().positive().optional().describe('Quarter notes per cycle (default: found, usually one bar)'),
+        offset: z.number().min(0).optional().describe('Cycle where the first compared bar starts (default: found)'),
+        transpose: z.number().int().optional().describe('Semitones the piece is meant to sound above the reference'),
+        tolerance: z.number().positive().optional().describe('Quarter notes two onsets may differ and still match (default 1/16)'),
+      },
+    },
+    tool(async (args) => {
+      const { code, language } = await codeOf(args);
+      const score = readReferenceScore(await readFile(resolve(args.reference)), args.reference);
+      const report = await compareToReference(code, score, {
+        bars: args.bars ? parseBars(args.bars) : undefined,
+        quartersPerCycle: args.beatsPerCycle,
+        offset: args.offset,
+        transpose: args.transpose,
+        tolerance: args.tolerance,
+        language,
+      });
+      return formatCompare(report, score);
     }),
   );
 

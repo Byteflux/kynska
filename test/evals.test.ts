@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { extractCode, readReply, reasoningOptions, retryAfterMs, runAgent, runTool } from '../evals/agent.ts';
 import { eventF1 } from '../evals/score.ts';
-import { describeTasks, isFairExample, scoreTask } from '../evals/tasks.ts';
+import { describeTasks, isFairExample, recreateTasks, scoreTask } from '../evals/tasks.ts';
 import type { PatternEvent } from '../src/patterns/events.ts';
 import { ReferenceIndex } from '../src/reference/lookup.ts';
 import { smallReference } from './fixtures.ts';
@@ -244,6 +244,47 @@ describe('produce tasks', () => {
       expect(await scoreTask(produceTasks[0], code)).toMatchObject({ score: 0 });
     }
   }, 10000);
+});
+
+describe('recreate tasks', () => {
+  const tasks = recreateTasks();
+
+  it.each(tasks.map((t) => [t.id, t] as const))('%s: the known answer plays every note', async (_, task) => {
+    expect(await scoreTask(task, task.solution)).toMatchObject({ score: 1 });
+    // The prompt lists the notes plainly, not as Kynska's mini-notation.
+    expect(task.prompt).toMatch(/bar 1: 1: /);
+    expect(task.prompt).not.toMatch(/@\d/);
+  });
+
+  // Regression: jobs scoring at once read each other's tempo and layers, and
+  // known answers scored 0.36 to 0.50 in the eval run.
+  it('scores answers checked at the same time each on their own', async () => {
+    const results = await Promise.all(tasks.map((t) => scoreTask(t, t.solution)));
+    expect(results.map((r) => r.score)).toEqual(tasks.map(() => 1));
+  });
+
+  it('marks down a wrong note', async () => {
+    const task = tasks.find((t) => t.id === 'recreate/fur-elise')!;
+    const result = await scoreTask(task, task.solution.replace('d#5', 'd5'));
+    expect(result.score).toBeGreaterThan(0.9);
+    expect(result.score).toBeLessThan(1);
+  });
+
+  // Regression: in the pilot, answers with all four bars in one cycle at the
+  // one-bar setcpm played four times too fast and still scored 1.
+  it('halves the score at the wrong tempo, even with every note in time', async () => {
+    const task = tasks.find((t) => t.id === 'recreate/fur-elise')!;
+    const result = await scoreTask(task, task.solution.replace(/\.slow\(4\)/g, ''));
+    expect(result).toMatchObject({ score: 0.5, detail: expect.stringContaining('tempo 288 bpm, not 72: halved') });
+  });
+
+  it("gives the kynska tool the task's MIDI file for notes and compare", async () => {
+    const task = tasks.find((t) => t.id === 'recreate/gymnopedie-1')!;
+    const reference = new ReferenceIndex(smallReference);
+    expect(await runTool({ command: 'notes', bars: '1-2' }, reference, emptyCosts(), undefined, task.reference)).toMatch(/bar 1: ~ \[b3,d4,f#4\]@2/);
+    expect(await runTool({ command: 'compare', code: task.solution }, reference, emptyCosts(), undefined, task.reference)).toMatch(/Every reference note in bars 1-4 is played/);
+    expect(await runTool({ command: 'compare', code: task.solution }, reference)).toMatch(/no reference MIDI file/);
+  });
 });
 
 describe('eval rendering', () => {

@@ -12,7 +12,7 @@ export function summarize(rows: Row[], conditions: string[]): string {
     '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
   ];
   for (const condition of conditions) {
-    for (const kind of ['transcribe', 'describe', 'produce', 'all']) {
+    for (const kind of ['transcribe', 'describe', 'produce', 'recreate', 'all']) {
       const rs = rows.filter((r) => r.condition === condition && (kind === 'all' || r.kind === kind));
       if (!rs.length) continue;
       const scores = rs.map((r) => r.score);

@@ -12,7 +12,7 @@ everything else locally, into `.cache/` and `out/`, which git ignores.
 
 | Part | What it does |
 |---|---|
-| Patterns | Evaluates Strudel code headlessly, the way the strudel.cc REPL does: `events`, `check`, `diff`. JavaScript, Mondo notation and Tidal notation. |
+| Patterns | Evaluates Strudel code headlessly, the way the strudel.cc REPL does: `events`, `check`, `diff`, and `compare` against a reference song's MIDI file. JavaScript, Mondo notation and Tidal notation. |
 | Audio | Renders code to WAV with Strudel's own audio engine (synths, samples, soundfonts, effects) and measures it: level, loudness, clipping, silence, onsets: `render`, `analyse`. |
 | Knowledge | Agent-ready docs from Strudel's docs site and source: `docs build`, `lookup`, `llms.txt`. |
 | Skill | [`skills/strudel`](skills/strudel/SKILL.md): compose, arrange, mix, translate Tidal and debug, each step proven with the tools. |
@@ -66,14 +66,16 @@ how many cycles to render or list.
 | `form [file] [--cycles N] [--sections S]` | Which layer (`$:` or named label) plays which sounds in which cycles; with sections, events per layer per section and the note names each section uses |
 | `render [file] [--cycles N \| --from A --to B] [--sections S] [--layers] [--master=LUFS] [--out file.wav] [--tail S] [--sample-rate R]` | Renders N cycles (default 4), or cycles A to B, to a 16-bit WAV (default `./render.wav`) and reports level (and the cycle of the peak), loudness (LUFS), clipping, silence, and onsets against the pattern's events; `--sections` adds them per section, `--layers` renders each layer alone and measures it beside the mix, `--master=-14` writes the file mastered to that loudness |
 | `analyse <file.wav> [--sections S --cps C]` | The same measurements for any WAV file |
+| `notes <reference.mid> [--bars A-B] [--parts 1,2]` | A MIDI file's parts, metre and tempo, and each bar as one cycle of mini-notation where it can be (otherwise beat, notes and length) |
+| `compare <file> <reference.mid> [--bars A-B] [--beats-per-cycle Q] [--offset C] [--transpose=S] [--tolerance Q]` | How faithfully a piece plays a reference song: notes matched by pitch and onset in beats, the tempo checked apart (within 2%), recall, precision and F1 per reference part and per layer, and every changed, missing or extra note by bar and beat. Finds where bar 1 starts and how many quarter notes a cycle holds unless given |
 | `lookup <name>` | A function's reference entry: how to call it, parameters, examples, source; finds synonyms and full JSDoc names, and suggests names for typos |
 | `lookup --tag <tag>` / `--module <module>` / `--tags` | Functions by tag or source module; the tags |
 | `docs build` / `docs path` | Build everything in `out/` (below) / print where it is |
 | `reference build` | Build `out/reference.json` only |
 | `upstream` | Compare the pinned Strudel with its latest release and `main` |
-| `mcp` | Serve `check`, `events`, `diff`, `form`, `lookup`, `render` and `docs_path` as MCP tools over stdio |
+| `mcp` | Serve `check`, `events`, `diff`, `form`, `notes`, `compare`, `lookup`, `render` and `docs_path` as MCP tools over stdio |
 
-Exit codes: 0 success; 1 errors found (`check`), a difference (`diff`), an event
+Exit codes: 0 success; 1 errors found (`check`), a difference (`diff`, `compare`), an event
 that failed to play (`render`, e.g. an unknown sound) or a failure; 2 bad usage.
 
 ### Generated docs
@@ -169,7 +171,7 @@ tools against Strudel's own material (CI runs all of them):
 
 ### Evals
 
-`npm run evals` scores a model on 30 tasks, alone (`baseline`) and with the
+`npm run evals` scores a model on 36 tasks, alone (`baseline`) and with the
 `strudel` skill plus a `kynska` tool (`kynska`):
 
 - **transcribe** (16): write code producing these events; tasks generated from
@@ -179,6 +181,11 @@ tools against Strudel's own material (CI runs all of them):
   and events: tempo, duration, loudness, peaks, clipping, section entrances,
   key, bass range, layer count and loudness contrast between sections. Known
   solutions use Roland TR-909 drums and built-in synths.
+- **recreate** (6): four bars of a real piece from `test/references`, given to
+  both conditions as a plain list of notes by bar and beat; scored by
+  `compare`'s F1 against the excerpt's MIDI file, halved when the tempo is more
+  than 2% off. The Kynska agent can also read that MIDI file with `notes` and
+  check its code against it with `compare`.
 
 ```bash
 KYNSKA_EVAL_BASE_URL=https://api.example.com/v1 KYNSKA_EVAL_API_KEY=... npm run evals -- --model <model>
@@ -190,7 +197,8 @@ npm run evals -- --model <model> --repeats 3 --concurrency 4 --minutes 6
 ```
 
 `--repeats N` runs every task and condition N times (default 1). `--conditions
-baseline,kynska` chooses conditions; `--transcribe N` changes the number of
+baseline,kynska` chooses conditions and `--kinds transcribe,describe,produce,recreate`
+task kinds; `--transcribe N` changes the number of
 transcription tasks (default 16). `--minutes M` is the Kynska agent's turn budget
 in minutes (default 6), after which it is asked for final code. `--concurrency N`
 caps concurrent jobs (default 4); whatever it is, at most two renders run at

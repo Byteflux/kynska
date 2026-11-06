@@ -42,11 +42,4 @@ export const near = (a: number, b: number, tolerance = 1e-6) => Math.abs(a - b) 
 /** Whether two sorted number lists are equal, within a tolerance. */
 export const sameTimes = (a: number[], b: number[]) => a.length === b.length && a.every((x, i) => near(x, b[i]));
 
-/** Pitch of an event as MIDI, from `note` (name or number) or `freq`. */
-export function midiOf(event: PatternEvent, noteToMidi: (n: string) => number): number | undefined {
-  const v = event.value as { note?: string | number; n?: number; freq?: number };
-  if (typeof v?.note === 'number') return v.note;
-  if (typeof v?.note === 'string') return noteToMidi(v.note);
-  if (typeof v?.freq === 'number') return Math.round(69 + 12 * Math.log2(v.freq / 440));
-  return undefined;
-}
+export { midiOf } from '../src/patterns/pitch.ts';

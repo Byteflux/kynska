@@ -14,6 +14,7 @@ You cannot hear the music, so every claim you make about it needs **evidence** f
    - a piece that changes over time, in sections: [arrange.md](arrange.md), after compose
    - levels, clipping, loudness, a WAV file: [mix.md](mix.md)
    - TidalCycles code to bring into Strudel: [tidal.md](tidal.md)
+   - an existing song to recreate, with a MIDI file of it: [recreate.md](recreate.md)
    - a pattern that plays wrong, or an error: [debug.md](debug.md)
 2. **Look up every function you are not sure of** before writing it: `kynska lookup <name>` gives how to call it, its parameters and examples, and suggests names for a typo. For a topic, `kynska docs path` locates the docs: start from `llms.txt`, an index of pages.
 3. **Write the expected events, then the code.** In a file (`.js`; `.mondo` for Mondo notation), and before running it, write down what should play: which sounds and notes, at which positions in the cycle, over how many cycles.

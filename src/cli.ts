@@ -12,6 +12,8 @@ import { decodeWav, encodeWav } from './audio/wav.ts';
 import { buildDocs, formatDocsResult } from './docs/build.ts';
 import { OUT_DIR, ROOT } from './paths.ts';
 import { checkCode, formatCheck } from './patterns/check.ts';
+import { compareToReference, formatCompare } from './patterns/compare.ts';
+import { formatNotes, parseBars, readReferenceScore } from './score/reference-score.ts';
 import { diffCode, formatDiff } from './patterns/diff.ts';
 import { languageOf, type Language } from './patterns/evaluate.ts';
 import { runPattern } from './patterns/events.ts';
@@ -30,6 +32,13 @@ Commands:
                                           evaluation errors, silence (default 4 cycles)
   diff <before> <after> [--cycles N] [--json]
                                           Compare the events of two versions (default 1 cycle)
+  notes <reference.mid> [--bars A-B] [--parts 1,2] [--json]
+                                          A MIDI file's notes, part by part and bar by bar,
+                                          as mini-notation where it can be
+  compare <file> <reference.mid> [--bars A-B] [--beats-per-cycle Q] [--offset C]
+          [--transpose S] [--tolerance Q] [--cycles N] [--json]
+                                          How faithfully a piece plays a reference: notes
+                                          matched by pitch and beat, differences by bar and beat
   lookup <name> [--json]                  Show a function from the Strudel reference
   lookup --tag <tag> | --module <module>  List functions by tag or module
   lookup --tags                           List the tags and how many functions have each
@@ -48,7 +57,7 @@ Commands:
   docs build                              Build out/reference.json, the docs pages, llms.txt and llms-full.txt
   docs path                               Print where the built docs are (llms.txt, llms-full.txt, pages, reference.md)
   upstream                                Compare the pinned Strudel with its latest release and main
-  mcp                                     Serve check, events, diff, form, lookup, render and docs_path as MCP tools (stdio)
+  mcp                                     Serve check, events, diff, form, notes, compare, lookup, render and docs_path as MCP tools (stdio)
 
 Code is read from a file, or from stdin when the file is "-" or omitted. It is JavaScript,
 which can use mondo\`...\` and tidal\`...\` inline; --mondo (or a .mondo file) reads it as
@@ -56,8 +65,11 @@ Mondo notation throughout.
 Sections are lengths in cycles, in order, as arrange() takes them: "intro=4,A=16,B=12,outro=8"
 (or "4,16,12,8"); given alone, they also set how many cycles to render or list.
 --from/--to render cycles A to B only, e.g. one section as a draft.
-Exit codes: 0 success; 1 errors found (check), a difference (diff), an event that failed to
-play (render) or failure; 2 bad usage.`;
+compare counts in quarter notes: --beats-per-cycle is quarter notes per cycle (default: found,
+usually one bar), --offset the cycle where the first compared bar starts (default: found),
+--tolerance how far apart onsets still match (default 1/16 of a quarter note).
+Exit codes: 0 success; 1 errors found (check), a difference (diff, compare), an event that
+failed to play (render) or failure; 2 bad usage.`;
 
 class UsageError extends Error {}
 
@@ -105,6 +117,12 @@ async function main(argv: string[]): Promise<number> {
       tags: { type: 'boolean', default: false },
       mondo: { type: 'boolean', default: false },
       module: { type: 'string' },
+      bars: { type: 'string' },
+      parts: { type: 'string' },
+      'beats-per-cycle': { type: 'string' },
+      offset: { type: 'string' },
+      transpose: { type: 'string' },
+      tolerance: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -124,6 +142,14 @@ async function main(argv: string[]): Promise<number> {
       throw new UsageError(`--sections: ${(error as Error).message}`);
     }
   })();
+  const barsOption = () => {
+    if (values.bars === undefined) return undefined;
+    try {
+      return parseBars(values.bars);
+    } catch (error) {
+      throw new UsageError(`--bars: ${(error as Error).message}`);
+    }
+  };
   const windowOf = (fallback: number) => {
     const number = (v?: string) => (v === undefined ? undefined : Number(v));
     try {
@@ -158,6 +184,37 @@ async function main(argv: string[]): Promise<number> {
       const diff = await diffCode(await readCode(args[0]), await readCode(args[1]), cycles, language(args[0]));
       print(diff, () => formatDiff(diff, cycles));
       return diff.same ? 0 : 1;
+    }
+    case 'notes': {
+      if (!args[0]) throw new UsageError('notes needs a MIDI file');
+      const score = readReferenceScore(await readFile(args[0]), args[0]);
+      const parts = values.parts?.split(',').map(Number);
+      if (parts?.some((p) => !Number.isInteger(p) || p < 1)) throw new UsageError(`--parts takes part numbers such as 1,3, got "${values.parts}"`);
+      const options = { bars: barsOption(), parts };
+      print({ ...score, midi: undefined }, () => formatNotes(score, options));
+      return 0;
+    }
+    case 'compare': {
+      if (args.length !== 2) throw new UsageError('compare needs the piece and a MIDI file: <file> <reference.mid>');
+      const score = readReferenceScore(await readFile(args[1]), args[1]);
+      const number = (name: 'beats-per-cycle' | 'offset' | 'transpose' | 'tolerance' | 'cycles', check: (x: number) => boolean) => {
+        const v = values[name];
+        if (v === undefined) return undefined;
+        const x = v.includes('/') ? Number(v.split('/')[0]) / Number(v.split('/')[1]) : Number(v);
+        if (!Number.isFinite(x) || !check(x)) throw new UsageError(`--${name}: bad value "${v}"`);
+        return x;
+      };
+      const report = await compareToReference(await readCode(args[0]), score, {
+        bars: barsOption(),
+        quartersPerCycle: number('beats-per-cycle', (x) => x > 0),
+        offset: number('offset', (x) => x >= 0),
+        transpose: number('transpose', Number.isInteger),
+        tolerance: number('tolerance', (x) => x > 0),
+        cycles: number('cycles', (x) => x > 0),
+        language: language(args[0]),
+      });
+      print(report, () => formatCompare(report, score));
+      return report.same ? 0 : 1;
     }
     case 'lookup': {
       const index = new ReferenceIndex(await loadReference());
