@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { extractCode, readReply, reasoningOptions, retryAfterMs, runAgent, runTool } from '../evals/agent.ts';
 import { eventF1 } from '../evals/score.ts';
-import { describeTasks, scoreTask } from '../evals/tasks.ts';
+import { describeTasks, isFairExample, scoreTask } from '../evals/tasks.ts';
 import type { PatternEvent } from '../src/patterns/events.ts';
 import { ReferenceIndex } from '../src/reference/lookup.ts';
 import { smallReference } from './fixtures.ts';
@@ -24,6 +24,17 @@ describe('eventF1', () => {
     const actual = [ev('0', '1/2', { s: 'bd' }), ev('1/2', '1', { s: 'cp' }), ev('1/2', '1', { s: 'hh' })];
     expect(eventF1(expected, actual)).toEqual({ precision: 1 / 3, recall: 1 / 2, f1: 0.4 });
   });
+});
+
+describe('transcribe tasks', () => {
+  // Regression: `\brand` missed brand, so the pilot asked for s("hh*10").pan(brand)'s
+  // random booleans and no answer could score.
+  it.each(['s("hh*10").pan(brand)', 's("hh*8").pan(brandBy(0.3))', 'note("c3").sometimes(x => x.fast(2))', 's("bd*8").undegradeBy(0.5)'])(
+    'leaves out random example %s',
+    (code) => expect(isFairExample(code)).toBe(false),
+  );
+
+  it('keeps a deterministic example', () => expect(isFairExample('note("c3 d3 e3 g3").every(4, x=>x.rev())')).toBe(true));
 });
 
 describe('describe tasks', () => {
@@ -243,7 +254,7 @@ describe('eval rendering', () => {
     expect(result.text).toContain('By section:');
     expect(result.text).toContain('Layers, each rendered alone:');
     expect(result.text).toContain('Master');
-    expect(result.text).toContain('Before mastering: 0 clipped samples');
+    expect(result.text).toMatch(/Before mastering \(the code as strudel\.cc plays it\): peak -[\d.]+ dBFS, 0 clipped samples/);
     expect(result.premaster).toMatchObject({ clippedSamples: 0 });
     expect(result.report.stats.loudnessLufs).toBeCloseTo(-18, 0);
     expect(result.report.from).toBe(1);

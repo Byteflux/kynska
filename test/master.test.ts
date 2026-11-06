@@ -69,6 +69,24 @@ describe('master', () => {
     expect(formatMaster(m)).toMatch(/warning: more than 6 dB of limiting/);
   });
 
+  // Regression: in the glm-5.3 pilot, bass-drums runs mastered a mix with 2,544
+  // clipped samples, saw "0 clipped samples" on the file, and answered.
+  it("reports and warns when the code's own mix clips, though the file does not", () => {
+    const x = tonesWithClicks(4, 0.05, 1.2);
+    const m = master([x, x], RATE, { target: -14 });
+    expect(m.input.clippedSamples).toBeGreaterThan(0);
+    expect(m.input.peakDb).toBeCloseTo(db(1.2), 0);
+    expect(analyse(m.channels, RATE).clippedSamples).toBe(0);
+    expect(formatMaster(m)).toMatch(/Before mastering \(the code as strudel\.cc plays it\): peak \+1\.\d dBFS, \d+ clipped samples\nwarning: the code's own mix clips/);
+  });
+
+  it('does not warn when the code itself stays under full scale', () => {
+    const x = tonesWithClicks(4, 0.05, 0.6);
+    const m = master([x, x], RATE, { target: -14 });
+    expect(m.input.clippedSamples).toBe(0);
+    expect(formatMaster(m)).not.toMatch(/mix clips/);
+  });
+
   it('refuses audio too quiet to measure', () => {
     expect(() => master([new Float32Array(RATE)], RATE)).toThrow(/too short or too quiet/);
   });

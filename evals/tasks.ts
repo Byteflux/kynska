@@ -20,15 +20,22 @@ export type Task =
   | { id: string; kind: 'transcribe'; cycles: number; prompt: string; expected: PatternEvent[]; solution: string }
   | { id: string; kind: 'describe'; cycles: number; prompt: string; criteria: Criterion[]; solution: string };
 
-/** Code a transcription task cannot fairly ask for: randomness, input devices, other notations, loading. */
-const UNFAIR = /\b(rand|irand|perlin|choose|wchoose|shuffle|scramble|sometimes|someCycles|degrade|often|rarely|almostNever|almostAlways|samples|initTidal|mondo|midi|input|gamepad|slider|K\()/;
+/**
+ * Code a transcription task cannot fairly ask for: randomness, input devices, other
+ * notations, loading. Each name matches as a word prefix, so `rand` covers `rand2`
+ * and `randcat`; names that only end in one (`brand`, `undegradeBy`) are listed too.
+ */
+const UNFAIR = /\b(rand|irand|brand|perlin|choose|wchoose|shuffle|scramble|sometimes|someCycles|degrade|undegrade|often|rarely|almostNever|almostAlways|samples|initTidal|mondo|midi|input|gamepad|slider|K\()/;
+
+/** Whether a documented example can be a transcription task. */
+export const isFairExample = (code: string) => !UNFAIR.test(code) && code.length < 300;
 
 /** Up to `count` transcription tasks from the reference's examples, in a stable order. */
 export async function transcribeTasks(reference: Reference, count: number, cycles = 2): Promise<Task[]> {
   const candidates = reference.functions
     .filter((f) => f.callable.global || f.callable.method)
     .flatMap((f) => f.examples.map((code, i) => ({ id: `transcribe/${f.name}-${i + 1}`, code })))
-    .filter(({ code }) => !UNFAIR.test(code) && code.length < 300)
+    .filter(({ code }) => isFairExample(code))
     .sort((a, b) => createHash('sha1').update(a.id).digest('hex').localeCompare(createHash('sha1').update(b.id).digest('hex')));
   const tasks: Task[] = [];
   for (const { id, code } of candidates) {

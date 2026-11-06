@@ -4,7 +4,7 @@
 // with drums cannot reach release loudness (about -14 LUFS) without clipping;
 // this is the step a mastering engineer adds. It changes the file only: the
 // code plays unmastered on strudel.cc.
-import { loudness } from './analyse.ts';
+import { CLIP_LEVEL, loudness } from './analyse.ts';
 
 export type MasterOptions = {
   /** Integrated loudness to reach, in LUFS. Default -14. */
@@ -29,6 +29,11 @@ export type MasterResult = {
   /** Share of the time the limiter turned down by more than 1 dB, 0 to 1. */
   limitedShare: number;
   ceiling: number;
+  /**
+   * The mix as the code plays it, before mastering: what strudel.cc plays. The
+   * limiter hides its clipping in the file, so it is reported on its own.
+   */
+  input: { peakDb: number; clippedSamples: number };
 };
 
 /** More limiting than this squashes drums audibly; rebalance the mix first. */
@@ -106,13 +111,37 @@ export function master(channels: Float32Array[], sampleRate: number, options: Ma
     if (g < minGain) minGain = g;
     if (g < limitedBelow) limited++;
   }
-  return { channels: out, before, after, gainDb, maxReductionDb: -toDb(minGain), limitedShare: gain.length ? limited / gain.length : 0, ceiling: ceilingDb };
+  let inputPeak = 0;
+  let clippedSamples = 0;
+  for (const ch of channels) {
+    for (const x of ch) {
+      const abs = Math.abs(x);
+      if (abs > inputPeak) inputPeak = abs;
+      if (abs >= CLIP_LEVEL) clippedSamples++;
+    }
+  }
+  return {
+    channels: out,
+    before,
+    after,
+    gainDb,
+    maxReductionDb: -toDb(minGain),
+    limitedShare: gain.length ? limited / gain.length : 0,
+    ceiling: ceilingDb,
+    input: { peakDb: toDb(inputPeak), clippedSamples },
+  };
 }
 
 export function formatMaster(m: MasterResult): string {
   const lines = [
     `Mastered to ${m.after.toFixed(1)} LUFS (from ${m.before.toFixed(1)}): ${m.gainDb >= 0 ? '+' : ''}${m.gainDb.toFixed(1)} dB, limiter at ${m.ceiling.toFixed(1)} dBFS took up to ${m.maxReductionDb.toFixed(1)} dB off peaks, limiting ${Math.round(m.limitedShare * 100)}% of the time`,
+    `Before mastering (the code as strudel.cc plays it): peak ${m.input.peakDb >= 0 ? '+' : ''}${m.input.peakDb.toFixed(1)} dBFS, ${m.input.clippedSamples} clipped samples`,
   ];
+  if (m.input.clippedSamples) {
+    lines.push(
+      `warning: the code's own mix clips; the limiter hides it in this file, but strudel.cc plays the code unmastered. Lower the gains in the code until this line shows 0 clipped samples`,
+    );
+  }
   if (m.maxReductionDb > HEAVY_LIMITING_DB) {
     lines.push(
       `warning: more than ${HEAVY_LIMITING_DB} dB of limiting flattens the drums; lower the layers with the largest gap between peak and loudness (render --layers) and master again`,

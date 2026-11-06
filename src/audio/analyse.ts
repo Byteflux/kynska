@@ -100,6 +100,9 @@ export function loudness(channels: Float32Array[], sampleRate: number): number |
   return gated.length ? lufs(mean(gated)) : null;
 }
 
+/** A sample at or above this (linear) counts as clipped. */
+export const CLIP_LEVEL = 0.999;
+
 export function analyse(channels: Float32Array[], sampleRate: number): AudioStats {
   const frames = channels[0]?.length ?? 0;
   let peak = 0;
@@ -115,7 +118,7 @@ export function analyse(channels: Float32Array[], sampleRate: number): AudioStat
         peak = abs;
         peakIndex = i;
       }
-      if (abs >= 0.999) clipped++;
+      if (abs >= CLIP_LEVEL) clipped++;
       sumSq += x * x;
       sum += x;
     }
