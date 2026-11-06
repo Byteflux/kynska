@@ -2,5 +2,7 @@ node_modules/
 # Upstream Strudel checkouts and everything generated from them stay out of git.
 .cache/
 out/
+# The GitHub Pages site, built in CI from out/ (scripts/build-site.ts).
+site/
 dist/
 coverage/

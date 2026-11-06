@@ -80,6 +80,14 @@ that failed to play (`render`, e.g. an unknown sound) or a failure; 2 bad usage.
 
 ### Generated docs
 
+The same docs are published at https://byteflux.github.io/kynska/: an agent
+without Kynska installed can fetch
+[`llms.txt`](https://byteflux.github.io/kynska/llms.txt) and follow its links. CI
+builds and deploys the site from `main` after every check passes
+(`scripts/build-site.ts`); it is never committed. Like Strudel, the converted docs
+are licensed AGPL-3.0-or-later; the site carries the licence text and the Strudel
+commit they come from.
+
 | File | What it is |
 |---|---|
 | `out/llms.txt` | An index in the [llms.txt](https://llmstxt.org) format: every page in the site's sidebar order, with a one-line summary |

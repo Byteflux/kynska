@@ -1,5 +1,9 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { convertPage } from '../src/docs/convert.ts';
+import { buildSite } from '../src/docs/site.ts';
 import { readSidebar } from '../src/docs/sidebar.ts';
 import { ReferenceIndex } from '../src/reference/lookup.ts';
 import { entry, smallReference } from './fixtures.ts';
@@ -132,5 +136,45 @@ See [samples](/learn/samples/#banks), [the workshop](../../workshop/first-sounds
   it('warns about reference entries it cannot find', () => {
     const { warnings } = convert('# X\n\n<JsDoc name="nothingLikeThis" h={3} />\n');
     expect(warnings).toEqual([expect.stringMatching(/nothingLikeThis/)]);
+  });
+});
+
+describe('buildSite', () => {
+  const pin = { version: '1.2.6', repository: 'https://codeberg.org/uzu/strudel.git', tag: 'v1.2.6', commit: 'd198910a86fcaecd658ef528bfa6d7884e93490b' };
+
+  async function builtDocs() {
+    const outDir = await mkdtemp(join(tmpdir(), 'kynska-site-out-'));
+    await mkdir(join(outDir, 'docs', 'learn'), { recursive: true });
+    for (const [f, text] of [['llms.txt', '# Strudel\n'], ['llms-full.txt', 'all'], ['reference.json', '{}'], ['docs/reference.md', '# ref'], ['docs/learn/sounds.md', '# Sounds']]) {
+      await writeFile(join(outDir, f), text);
+    }
+    return outDir;
+  }
+
+  it('serves the built docs as they are, with the licence text and an index page', async () => {
+    const outDir = await builtDocs();
+    const siteDir = join(outDir, '..', `${outDir.split('/').pop()}-site`);
+    try {
+      await buildSite({ outDir, siteDir, pin, licenceText: 'GNU AFFERO GENERAL PUBLIC LICENSE' });
+      expect(await readFile(join(siteDir, 'llms.txt'), 'utf8')).toBe('# Strudel\n');
+      expect(await readFile(join(siteDir, 'docs', 'learn', 'sounds.md'), 'utf8')).toBe('# Sounds');
+      expect(await readFile(join(siteDir, 'LICENSE.txt'), 'utf8')).toBe('GNU AFFERO GENERAL PUBLIC LICENSE');
+      const index = await readFile(join(siteDir, 'index.html'), 'utf8');
+      expect(index).toContain('href="llms.txt"');
+      expect(index).toContain('licensed AGPL-3.0-or-later');
+      expect(index).toContain('href="https://codeberg.org/uzu/strudel/src/commit/d198910a86fcaecd658ef528bfa6d7884e93490b"');
+    } finally {
+      await rm(outDir, { recursive: true, force: true });
+      await rm(siteDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to build before the docs are built', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'kynska-site-empty-'));
+    try {
+      await expect(buildSite({ outDir, siteDir: join(outDir, 'site'), pin, licenceText: '' })).rejects.toThrow(/build the docs first/);
+    } finally {
+      await rm(outDir, { recursive: true, force: true });
+    }
   });
 });

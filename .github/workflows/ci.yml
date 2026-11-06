@@ -47,3 +47,32 @@ jobs:
       - name: Plugin manifests
         run: |
           node -e 'for (const f of [".claude-plugin/plugin.json", ".claude-plugin/marketplace.json", ".mcp.json"]) JSON.parse(require("fs").readFileSync(f, "utf8"))'
+
+      # The docs built above, published to GitHub Pages from main once every check
+      # has passed. The site is uploaded as an artifact, never committed.
+      - name: Build the Pages site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: node scripts/build-site.ts site
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          path: site
+
+  pages:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # One deployment at a time; a newer push waits rather than cancelling one mid-way.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
