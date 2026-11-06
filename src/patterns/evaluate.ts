@@ -24,7 +24,20 @@ export function languageOf(file?: string): Language {
   return file?.endsWith('.mondo') ? 'mondo' : 'js';
 }
 
-export async function evaluateCode(code: string, language: Language = 'js'): Promise<Evaluation> {
+let queue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Evaluations run one at a time. Strudel keeps the tempo (setcpm) and the `$:`
+ * layers it collects in shared state, and evaluating awaits partway, so two
+ * evaluations at once (eval jobs, MCP calls) would read each other's.
+ */
+export function evaluateCode(code: string, language: Language = 'js'): Promise<Evaluation> {
+  const run = queue.then(() => evaluateNow(code, language));
+  queue = run.catch(() => undefined);
+  return run;
+}
+
+async function evaluateNow(code: string, language: Language): Promise<Evaluation> {
   const scope = await ensureScope();
   const logs: string[] = [];
   let error: Error | undefined;

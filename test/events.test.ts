@@ -91,4 +91,13 @@ describe('runPattern', () => {
     const { messages } = await runPattern('note("c3").add(12)');
     expect(messages.join('\n')).toMatch(/arithmetic on control pattern/);
   });
+
+  // Regression: Strudel keeps the tempo and the `$:` layers it collects in shared
+  // state, so evaluations running at once (eval jobs, MCP calls) read each other's.
+  it('keeps the tempo and layers of evaluations that run at once apart', async () => {
+    const codes = Array.from({ length: 8 }, (_, i) => `setcpm(${60 + i * 10}/4)\n${Array.from({ length: i + 1 }, () => '$: s("bd")').join('\n')}`);
+    const runs = await Promise.all(codes.map((code) => runPattern(code)));
+    expect(runs.map((r) => Math.round(r.cps * 240))).toEqual(codes.map((_, i) => 60 + i * 10));
+    expect(runs.map((r) => r.events.length)).toEqual(codes.map((_, i) => i + 1));
+  });
 });
