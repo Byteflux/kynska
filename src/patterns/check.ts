@@ -6,7 +6,7 @@ import { full, simple } from 'acorn-walk';
 import type { ReferenceIndex } from '../reference/lookup.ts';
 import { suggest } from '../text/suggest.ts';
 import { evaluateCode, type Language } from './evaluate.ts';
-import { eventsOf } from './events.ts';
+import { eventsOf, type PatternEvent } from './events.ts';
 import {
   captureConsole,
   engineMessages,
@@ -28,6 +28,7 @@ export type Diagnostic = {
     | 'query'
     | 'engine-warning'
     | 'silent'
+    | 'ignored-control'
     | 'no-reference';
   message: string;
   line?: number;
@@ -167,6 +168,30 @@ function isPatternExpression(node: AnyNode, declared: Set<string>, globals: Read
   }
 }
 
+/**
+ * Synths whose pitch comes only from `note` or `freq`: superdough ignores `n` on
+ * them (supersaw reads it as detune), so `n("28").s("triangle")` plays the default
+ * C2, not E1. On samples and soundfonts `n` picks a sample, which is fine.
+ */
+const PITCH_FROM_NOTE = new Set(['sine', 'sin', 'triangle', 'tri', 'square', 'sqr', 'sawtooth', 'saw', 'pulse', 'supersaw']);
+
+/** A warning per synth whose events have `n` but no `note` or `freq`. */
+function ignoredN(events: PatternEvent[]): Diagnostic[] {
+  const synths = new Set<string>();
+  for (const { value } of events) {
+    const v = value as Record<string, unknown> | null;
+    if (!v || typeof v !== 'object' || v.n === undefined || v.note !== undefined || v.freq !== undefined) continue;
+    // With no sound named, superdough plays a triangle.
+    const s = v.s ?? 'triangle';
+    if (typeof s === 'string' && PITCH_FROM_NOTE.has(s)) synths.add(s);
+  }
+  return [...synths].map((s) => ({
+    severity: 'warning',
+    code: 'ignored-control',
+    message: `\`n\` does not set the pitch of the synth "${s}", which reads only \`note\` or \`freq\`, so those notes all play at the default C2. Use note(...), or n(...).scale(...) for scale degrees.`,
+  }));
+}
+
 function at(node: AnyNode): Pick<Diagnostic, 'line' | 'column'> {
   return node.loc ? { line: node.loc.start.line, column: node.loc.start.column + 1 } : {};
 }
@@ -208,9 +233,9 @@ export async function checkCode(code: string, options: CheckOptions = {}): Promi
       return done({ cps: evaluation.cps });
     }
     // 4. Query: some errors only appear when events are computed.
-    let events: number;
+    let listed: PatternEvent[];
     try {
-      events = (await captureConsole(evaluation.logs, async () => eventsOf(evaluation.pattern, cycles))).length;
+      listed = await captureConsole(evaluation.logs, async () => eventsOf(evaluation.pattern, cycles));
     } catch (error) {
       diagnostics.push({ severity: 'error', code: 'query', message: (error as Error).message });
       return done({ cps: evaluation.cps });
@@ -220,6 +245,8 @@ export async function checkCode(code: string, options: CheckOptions = {}): Promi
     for (const message of engineMessages(evaluation.logs)) {
       diagnostics.push({ severity: 'warning', code: 'engine-warning', message: message.replace(/^\[warn\]:?\s*/, '') });
     }
+    diagnostics.push(...ignoredN(listed));
+    const events = listed.length;
     // Stand-ins are silent, so silence says nothing when they are in use.
     if (events === 0 && !browserOnly.size) {
       diagnostics.push({

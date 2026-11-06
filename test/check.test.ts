@@ -74,6 +74,22 @@ describe('checkCode', () => {
     expect(codes(result.diagnostics)).toEqual(['silent']);
   });
 
+  // Regression: in the glm-5.3 pilot every bass-drums answer wrote
+  // n("28 28 31 ...").s("triangle"); synths ignore n, so each note played C2.
+  it('warns that n does not set a synth pitch', async () => {
+    const result = await check('$: s("bd*4")\n$: n("28 31").s("triangle")\n$: n("0 2").s("supersaw")');
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.filter((d) => d.code === 'ignored-control')).toEqual([
+      expect.objectContaining({ severity: 'warning', message: expect.stringMatching(/synth "triangle".*note\(/) }),
+      expect.objectContaining({ message: expect.stringMatching(/synth "supersaw"/) }),
+    ]);
+  });
+
+  it('accepts n where it means something: samples, and scale degrees', async () => {
+    const result = await check('$: n("0 1").s("hh")\n$: n("0 2").scale("C:major").s("sawtooth")\n$: note("e1").s("triangle")');
+    expect(codes(result.diagnostics)).not.toContain('ignored-control');
+  });
+
   it('warns about functions that exist but are not documented', async () => {
     const result = await check('s("bd").fast(2).slow(2).slow(2)');
     expect(result.ok).toBe(true);
