@@ -1,6 +1,6 @@
 import type { Reference, ReferenceEntry } from '../src/reference/types.ts';
 
-const pin = { version: '1.2.6', commit: 'd198910a86fcaecd658ef528bfa6d7884e93490b', repository: 'https://codeberg.org/uzu/strudel.git' };
+const pin = { branch: 'main', commit: '530e9630bfee3f1b7b770f3f243b338495934e9d', date: '2026-11-01T12:26:55+01:00', repository: 'https://codeberg.org/uzu/strudel.git' };
 
 export function entry(name: string, extra: Partial<ReferenceEntry> = {}): ReferenceEntry {
   return {

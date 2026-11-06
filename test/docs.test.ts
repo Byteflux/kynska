@@ -140,7 +140,7 @@ See [samples](/learn/samples/#banks), [the workshop](../../workshop/first-sounds
 });
 
 describe('buildSite', () => {
-  const pin = { version: '1.2.6', repository: 'https://codeberg.org/uzu/strudel.git', tag: 'v1.2.6', commit: 'd198910a86fcaecd658ef528bfa6d7884e93490b' };
+  const pin = { repository: 'https://codeberg.org/uzu/strudel.git', branch: 'main', commit: 'd198910a86fcaecd658ef528bfa6d7884e93490b', date: '2026-01-17T15:26:28-08:00' };
 
   async function builtDocs() {
     const outDir = await mkdtemp(join(tmpdir(), 'kynska-site-out-'));

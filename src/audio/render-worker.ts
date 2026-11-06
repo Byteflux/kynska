@@ -24,8 +24,9 @@ async function render(code: string, options: Required<RenderOptions>): Promise<R
   engine.log = (message) => {
     if (/error|not found|warn/i.test(message)) warnings.add(message.replace(/^\[\w+\]\s*/, ''));
   };
-  // reverbGen keeps a reference on window.filterNode while it renders.
-  (globalThis as any).window ??= {};
+  // reverbGen keeps a reference on window.filterNode while it renders, and the
+  // dough worklet listens for and posts messages on window.
+  (globalThis as any).window ??= Object.assign(new EventTarget(), { postMessage: () => {} });
   const ctx = new engine.wa.OfflineAudioContext(2, Math.ceil(seconds * sampleRate), sampleRate);
   await attachContext(engine, ctx);
   const logs: string[] = [];

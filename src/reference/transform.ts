@@ -97,7 +97,7 @@ export function toReference(doclets: Doclet[], opts: TransformOptions): Referenc
   for (const { d } of ordered) if (!byName.has(d.name!)) byName.set(d.name!, toEntry(d, opts));
   return {
     schema: 1,
-    strudel: { version: opts.pin.version, commit: opts.pin.commit, repository: opts.pin.repository },
+    strudel: { branch: opts.pin.branch, commit: opts.pin.commit, date: opts.pin.date, repository: opts.pin.repository },
     functions: [...byName.values()].sort((a, b) => a.name.localeCompare(b.name)),
   };
 }

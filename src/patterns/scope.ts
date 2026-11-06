@@ -105,7 +105,8 @@ export function captureConsole<T>(logs: string[], fn: () => Promise<T>): Promise
  */
 export function silentRepl(scope: Pick<Scope, 'core' | 'transpiler'>, onEvalError: (error: unknown) => void, mondo = false) {
   return scope.core.repl({
-    defaultOutput: async () => {},
+    // Strudel's sound output, called for each scheduled event; this REPL never schedules.
+    onSchedule: async () => {},
     getTime: () => 0,
     transpiler: scope.transpiler,
     setInterval: () => 0,

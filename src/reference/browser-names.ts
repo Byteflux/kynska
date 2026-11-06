@@ -20,9 +20,39 @@ export const HEADLESS_PACKAGES = new Set([
 
 type AnyNode = Node & Record<string, any>;
 
-/** The @strudel/* packages strudel.cc's REPL puts in scope (website/src/repl/util.mjs). */
+/**
+ * The @strudel/* packages strudel.cc's REPL puts in scope (website/src/repl/util.mjs):
+ * those its module list imports inline, `import('@strudel/draw')`, and those it
+ * imports at the top, `import * as strudelWebaudio from '@strudel/webaudio'`, and
+ * then names in loadModules().
+ */
 export function scopePackages(utilSource: string): string[] {
-  return [...new Set([...utilSource.matchAll(/import\(\s*['"](@strudel\/[\w-]+)['"]\s*\)/g)].map((m) => m[1]))];
+  const inline = [...utilSource.matchAll(/import\(\s*['"](@strudel\/[\w-]+)['"]\s*\)/g)].map((m) => m[1]);
+  const start = utilSource.search(/function\s+loadModules\b/);
+  const body = start >= 0 ? utilSource.slice(start) : utilSource;
+  const named = [...utilSource.matchAll(/import\s*\*\s*as\s+([\w$]+)\s+from\s*['"](@strudel\/[\w-]+)['"]/g)]
+    .filter(([, id]) => new RegExp(`(^|[^\\w$.])${id.replace(/\$/g, '\\$')}([^\\w$]|$)`).test(body))
+    .map((m) => m[2]);
+  return [...new Set([...inline, ...named])];
+}
+
+/** Names a declaration binds, including destructuring: `const { move, motor } = ...`, `const [a, ...b] = ...`. */
+function boundNames(pattern: AnyNode | null | undefined): string[] {
+  if (!pattern) return [];
+  switch (pattern.type) {
+    case 'Identifier':
+      return [pattern.name];
+    case 'ObjectPattern':
+      return pattern.properties.flatMap((p: AnyNode) => boundNames(p.type === 'RestElement' ? p.argument : p.value));
+    case 'ArrayPattern':
+      return pattern.elements.flatMap((e: AnyNode | null) => boundNames(e));
+    case 'RestElement':
+      return boundNames(pattern.argument);
+    case 'AssignmentPattern':
+      return boundNames(pattern.left);
+    default:
+      return [];
+  }
 }
 
 const dirsByRoot = new Map<string, Promise<Map<string, string>>>();
@@ -76,7 +106,7 @@ async function exportedNames(file: string, sourceRoot: string, seen: Set<string>
     if (node.type === 'ExportNamedDeclaration') {
       const d = node.declaration;
       if (d?.id?.name) names.push(d.id.name);
-      for (const v of d?.declarations ?? []) if (v.id?.name) names.push(v.id.name);
+      for (const v of d?.declarations ?? []) names.push(...boundNames(v.id));
       for (const s of node.specifiers ?? []) names.push(s.exported.name ?? s.exported.value);
     } else if (node.type === 'ExportAllDeclaration' && !node.exported) {
       const target = String(node.source.value);

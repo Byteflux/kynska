@@ -5,7 +5,7 @@ export type ReferenceEntry = {
   longname: string;
   /** Other names it can be called by (Strudel's @synonyms and @alias). */
   synonyms: string[];
-  /** Categories from Strudel's @tags. Empty for releases that predate them. */
+  /** Categories from Strudel's @tags; empty for functions that have none. */
   tags: string[];
   /** Where it is defined, as "<package>/<file>", e.g. "core/controls". */
   module: string;
@@ -22,8 +22,8 @@ export type ReferenceEntry = {
 
 export type Reference = {
   schema: 1;
-  /** tagsFrom: the later commit whose @tags filled in categories, when strudel.json names one. */
-  strudel: { version: string; commit: string; repository: string; tagsFrom?: string };
+  /** The Strudel commit the reference documents: strudel.json's pin. */
+  strudel: { branch: string; commit: string; date: string; repository: string };
   functions: ReferenceEntry[];
   /**
    * Names strudel.cc has in scope from packages Kynska cannot run headlessly

@@ -72,7 +72,7 @@ how many cycles to render or list.
 | `lookup --tag <tag>` / `--module <module>` / `--tags` | Functions by tag or source module; the tags |
 | `docs build` / `docs path` | Build everything in `out/` (below) / print where it is |
 | `reference build` | Build `out/reference.json` only |
-| `upstream` | Compare the pinned Strudel with its latest release and `main` |
+| `upstream` | Compare the pinned Strudel commit with Strudel's `main` today |
 | `mcp` | Serve `check`, `events`, `diff`, `form`, `notes`, `compare`, `lookup`, `render` and `docs_path` as MCP tools over stdio |
 
 Exit codes: 0 success; 1 errors found (`check`), a difference (`diff`, `compare`), an event
@@ -144,22 +144,32 @@ naming the package, and their own effect is not checked.
 
 ## Strudel version
 
-[`strudel.json`](strudel.json) pins the Strudel release Kynska builds against,
-and `package.json` pins the matching `@strudel/*` packages and `superdough`. A
-test fails when the two drift apart. Strudel added function tags (`@tags`) after
-1.2.6, so `tagsCommit` names a later commit whose tags fill in the categories,
-matched by function name.
+Kynska follows Strudel's `main` branch, which strudel.cc deploys on every push,
+so code that passes Kynska's checks plays the same on strudel.cc. npm has only
+Strudel's releases, which fall hundreds of commits behind `main`.
+
+[`strudel.json`](strudel.json) pins one commit on `main`. After every
+`npm install`, `scripts/link-strudel.ts` fetches that commit into `.cache/` and
+links its packages into `node_modules`: the pattern packages run as their source,
+and `superdough` is built with its own Vite config, as Strudel's releases are.
+The third-party packages they import are Kynska's own dependencies, at the
+versions Strudel's lockfile uses; linking stops and names any that are missing.
+If a later `npm install <package>` removes the links, Kynska says so: run
+`npm run link-strudel`.
 
 ```bash
 kynska upstream
 ```
 
 ```bash
-node scripts/upgrade-strudel.ts 1.2.7
+node scripts/upgrade-strudel.ts
 ```
 
-The upgrade script moves the pin and the packages together, rebuilds the docs,
-and runs the tests and every sweep below; it leaves the changes for review.
+The upgrade script moves the pin to `main`'s newest commit (or to a commit you
+give it), links it, rebuilds the docs, and runs the tests, every sweep below and
+the oracle evals. A scheduled workflow (`.github/workflows/track-strudel.yml`)
+runs it every day and lands the move on `main` when every check passes, which
+republishes the docs; when a check fails, the run fails and nothing is pushed.
 
 ## Develop
 

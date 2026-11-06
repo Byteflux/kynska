@@ -1,8 +1,7 @@
 // Tidal notation (`await initTidal()` then tidal`...`), as on strudel.cc. The
-// @strudel/tidal on npm is older than Strudel 1.2.6 (0.1.0, built for core
-// 1.1.0), so the package is loaded from the pinned Strudel source in .cache/,
-// with its Haskell parser (web-tree-sitter plus the tree-sitter-haskell grammar,
-// fetched once from npm into .cache/tidal/).
+// package is loaded from the pinned Strudel source in .cache/, like the rest of
+// Strudel, with its Haskell parser (web-tree-sitter plus the tree-sitter-haskell
+// grammar, fetched once from npm into .cache/tidal/).
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { createRequire, registerHooks } from 'node:module';
@@ -59,10 +58,19 @@ function loadTidal(): Promise<any> {
     const { fetchStrudel } = await import('../reference/build.ts');
     const source = await fetchStrudel(await readPin());
     const hs2js = pathToFileURL(join(source, 'packages', 'hs2js', 'src', 'index.mjs')).href;
+    const grammar = await grammarDir();
     registerHooks({
-      resolve: (specifier, context, next) => (specifier === 'hs2js' ? { url: hs2js, shortCircuit: true } : next(specifier, context)),
+      resolve: (specifier, context, next) => {
+        if (specifier === 'hs2js') return { url: hs2js, shortCircuit: true };
+        // hs2js imports its .wasm files with Vite's "?url" suffix for the browser
+        // build; setBase() below makes it read them from the grammar folder, so
+        // each import only needs to give that file's path.
+        const wasm = /([^/]+\.wasm)\?url$/.exec(specifier);
+        if (wasm) return { url: `data:text/javascript,export default ${encodeURIComponent(JSON.stringify(join(grammar, wasm[1])))}`, shortCircuit: true };
+        return next(specifier, context);
+      },
     });
-    (await import(hs2js)).setBase(`${await grammarDir()}/`);
+    (await import(hs2js)).setBase(`${grammar}/`);
     // tidal() looks Haskell names up on `window` and initTidal() defines d1..d9
     // there. A stand-in that inherits the global scope (where Strudel's functions
     // are) and has no-op event methods, for code that sees `window` and assumes a

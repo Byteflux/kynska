@@ -1,0 +1,77 @@
+name: Track Strudel main
+
+# strudel.cc runs Strudel's main branch, and Kynska follows it. Once a day this
+# moves strudel.json to main's newest commit, runs every check against it
+# (scripts/upgrade-strudel.ts), and lands the move on Kynska's main when all of
+# them pass. A failing check fails the run and nothing is pushed: fix what the
+# new Strudel broke, then run it again from the Actions tab.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: track-strudel
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Newest commit on Strudel main
+        id: upstream
+        run: |
+          repository=$(node -p 'require("./strudel.json").repository')
+          pinned=$(node -p 'require("./strudel.json").commit')
+          head=$(git ls-remote "$repository" refs/heads/main | cut -f1)
+          if [ -z "$head" ]; then echo "Could not read main from $repository"; exit 1; fi
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          if [ "$head" = "$pinned" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Strudel main is still at ${pinned:0:7}: nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Strudel main moved from ${pinned:0:7} to ${head:0:7}."
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.upstream.outputs.changed == 'true'
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/cache@v4
+        if: steps.upstream.outputs.changed == 'true'
+        with:
+          path: .cache
+          key: strudel-track-${{ steps.upstream.outputs.head }}
+          restore-keys: strudel-
+
+      - run: npm ci
+        if: steps.upstream.outputs.changed == 'true'
+
+      - name: Move to it and run every check
+        if: steps.upstream.outputs.changed == 'true'
+        run: node scripts/upgrade-strudel.ts ${{ steps.upstream.outputs.head }}
+
+      - name: Land it
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.upstream.outputs.head }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add strudel.json
+          git commit -m "chore(strudel): track main at ${HEAD_SHA:0:7}"
+          git push origin HEAD:main
+          # A push made with the workflow's token starts no workflows: start CI,
+          # which checks the commit again and republishes the docs.
+          gh workflow run ci.yml --ref main

@@ -28,4 +28,4 @@ Strudel runs Tidal notation itself, so a translation can be **proven** rather th
 
 ## Where the proof stops
 
-Strudel's Tidal parser is a partial port. At Strudel 1.2.6 it parses `|+ n 12` as setting every `n` to 12, where Tidal adds 12, and it cannot parse `0.25 ~> x`. When `tidal\`…\`` disagrees with what the Tidal code means, follow the meaning: write the expected events yourself (as in the main steps) and prove the translation against those. Strudel's own comparison page: `docs/learn/strudel-vs-tidal.md`.
+Strudel's Tidal parser is a partial port, and it changes with Strudel's main branch, which Kynska follows. In November 2026 it runs `|+ n 12` as Tidal does, but `0.25 ~> x` fails with "Invalid argument" when its events are listed. When `tidal\`…\`` disagrees with what the Tidal code means, follow the meaning: write the expected events yourself (as in the main steps) and prove the translation against those. Strudel's own comparison page: `docs/learn/strudel-vs-tidal.md`.

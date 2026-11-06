@@ -1,16 +1,22 @@
-import { createRequire } from 'node:module';
+import { realpathSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { ROOT as ROOT_DIR } from '../src/paths.ts';
+import { browserOnlyNames, scopePackages } from '../src/reference/browser-names.ts';
+import { assertLinked, missingDependencies, STRUDEL_PACKAGES } from '../src/reference/link.ts';
 import { formatEntry, ReferenceIndex } from '../src/reference/lookup.ts';
-import { readPin } from '../src/reference/pin.ts';
+import { pinName, readPin } from '../src/reference/pin.ts';
 import { toReference, type Doclet } from '../src/reference/transform.ts';
 import { smallReference } from './fixtures.ts';
 
 const ROOT = '/src/strudel';
 const pin = {
-  version: '1.2.6',
   repository: 'https://codeberg.org/uzu/strudel.git',
-  tag: '@strudel/core@1.2.6',
-  commit: 'd198910a86fcaecd658ef528bfa6d7884e93490b',
+  branch: 'main',
+  commit: '530e9630bfee3f1b7b770f3f243b338495934e9d',
+  date: '2026-11-01T12:26:55+01:00',
 };
 
 function doclet(name: string, extra: Partial<Doclet> = {}): Doclet {
@@ -36,7 +42,7 @@ describe('toReference', () => {
   it('keeps documented user-facing functions, sorted by name', () => {
     const ref = transform([doclet('note'), doclet('lpf'), doclet('fast', { kind: 'function', memberof: 'Pattern' })]);
     expect(ref.functions.map((f) => f.name)).toEqual(['fast', 'lpf', 'note']);
-    expect(ref.strudel).toEqual({ version: '1.2.6', commit: pin.commit, repository: pin.repository });
+    expect(ref.strudel).toEqual({ branch: 'main', commit: pin.commit, date: pin.date, repository: pin.repository });
   });
 
   it('drops internals: undocumented, underscored, engine classes, no description, other kinds', () => {
@@ -143,8 +149,69 @@ describe('formatEntry', () => {
 });
 
 describe('strudel.json', () => {
-  it('pins the same Strudel version that is installed', async () => {
-    const installed = createRequire(import.meta.url)('@strudel/core/package.json').version;
-    expect((await readPin()).version).toBe(installed);
+  it('pins a commit on main, and the packages are linked from it', async () => {
+    const pinned = await readPin();
+    expect(pinned.branch).toBe('main');
+    expect(pinName(pinned)).toMatch(/^main at [0-9a-f]{7} \(\d{4}-\d{2}-\d{2}\)$/);
+    expect(() => assertLinked(pinned)).not.toThrow();
+    for (const name of Object.keys(STRUDEL_PACKAGES)) expect(realpathSync(join(ROOT_DIR, 'node_modules', name))).toContain(pinned.commit);
+  });
+
+  it('says how to fix links that are missing or from another commit', () => {
+    expect(() => assertLinked({ ...pin, commit: 'f'.repeat(40) })).toThrow(/not linked from the pinned commit fffffff .*Run: npm run link-strudel/);
+  });
+
+  it('installs every third-party package the linked Strudel packages import', async () => {
+    const pinned = await readPin();
+    expect(await missingDependencies(join(ROOT_DIR, '.cache', 'strudel', pinned.commit))).toEqual([]);
+  });
+});
+
+// Regression: at Strudel main, strudel.cc's REPL names @strudel/webaudio through a
+// namespace import, and @strudel/mqtt exports move and motor by destructuring;
+// both went unseen, and check called registerSound and move unknown functions.
+describe('browser-only names', () => {
+  const util = `import * as strudelCore from '@strudel/core';
+import * as strudelWebaudio from '@strudel/webaudio';
+import * as notInScope from '@strudel/unused';
+const { setVersionDefaults } = strudelWebaudio;
+export function loadModules() {
+  let modules = [
+    strudelCore,
+    import('@strudel/mqtt'),
+    strudelWebaudio,
+  ];
+  return evalScope(...modules);
+}
+`;
+
+  it('reads the packages strudel.cc puts in scope, imported inline or at the top', () => {
+    expect(scopePackages(util).sort()).toEqual(['@strudel/core', '@strudel/mqtt', '@strudel/webaudio']);
+  });
+
+  it('finds destructured exports, prototype methods, and exports re-exported from another package', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kynska-names-'));
+    const write = async (file: string, text: string) => {
+      await mkdir(dirname(join(root, file)), { recursive: true });
+      await writeFile(join(root, file), text);
+    };
+    try {
+      await write('website/src/repl/util.mjs', util);
+      await write('packages/mqtt/package.json', '{"name":"@strudel/mqtt"}');
+      await write('packages/mqtt/index.mjs', "export const { move, motor } = createParams('move', 'motor');\nPattern.prototype.robot = function () {};\n");
+      await write('packages/webaudio/package.json', '{"name":"@strudel/webaudio"}');
+      await write('packages/webaudio/index.mjs', "export * from 'superdough';\n");
+      await write('packages/superdough/package.json', '{"name":"superdough"}');
+      await write('packages/superdough/index.mjs', 'export const registerSound = () => {};\nexport function getAudioContext() {}\n');
+      expect(await browserOnlyNames(root)).toEqual({
+        getAudioContext: '@strudel/webaudio',
+        motor: '@strudel/mqtt',
+        move: '@strudel/mqtt',
+        registerSound: '@strudel/webaudio',
+        robot: '@strudel/mqtt',
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

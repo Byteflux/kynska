@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Started by track-strudel.yml after it lands a move to a newer Strudel commit.
+  workflow_dispatch:
 
 jobs:
   check:
@@ -51,17 +53,17 @@ jobs:
       # The docs built above, published to GitHub Pages from main once every check
       # has passed. The site is uploaded as an artifact, never committed.
       - name: Build the Pages site
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: node scripts/build-site.ts site
 
       - uses: actions/upload-pages-artifact@v3
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:
           path: site
 
   pages:
     needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write

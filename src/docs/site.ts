@@ -3,7 +3,7 @@
 // Nothing here is committed: CI builds it and deploys it as a Pages artifact.
 import { cp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { StrudelPin } from '../reference/pin.ts';
+import { pinName, type StrudelPin } from '../reference/pin.ts';
 import { KYNSKA_URL, sourceUrl, STRUDEL_LICENCE } from './build.ts';
 
 /** What the site serves from `out/`, after `kynska docs build`. */
@@ -33,7 +33,7 @@ export function indexPage(pin: StrudelPin): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Strudel docs for agents</title>
-<meta name="description" content="Strudel ${pin.version}'s documentation as Markdown for coding agents and LLMs, with an llms.txt index.">
+<meta name="description" content="Strudel's documentation, as strudel.cc runs it, as Markdown for coding agents and LLMs, with an llms.txt index.">
 <link rel="alternate" type="text/plain" href="llms.txt" title="llms.txt">
 <style>
   :root { --bg: #fff; --fg: #1b1b1f; --muted: #5c5c66; --link: #0b57d0; --rule: #e3e3e8; }
@@ -54,7 +54,7 @@ export function indexPage(pin: StrudelPin): string {
 <body>
 <main>
 <h1>Strudel docs for agents</h1>
-<p>The documentation of <a href="https://strudel.cc">Strudel</a> ${pin.version}, the live coding environment for music in the browser, converted to Markdown for coding agents and language models by <a href="${KYNSKA_URL}">Kynska</a>. Playable examples become code blocks, and the function reference is written out in full.</p>
+<p>The documentation of <a href="https://strudel.cc">Strudel</a>, the live coding environment for music in the browser, converted to Markdown for coding agents and language models by <a href="${KYNSKA_URL}">Kynska</a>. It follows Strudel's ${pin.branch} branch, which strudel.cc runs: this build is ${pinName(pin)}. Playable examples become code blocks, and the function reference is written out in full.</p>
 
 <h2>Files</h2>
 <ul>
@@ -68,7 +68,7 @@ export function indexPage(pin: StrudelPin): string {
 <h2>Licence</h2>
 <p>Strudel and its documentation are licensed ${STRUDEL_LICENCE}, and so are these converted docs: <a href="LICENSE.txt">the licence text</a>. They are built from <a href="${source}">Strudel's source at commit ${pin.commit.slice(0, 7)}</a> by <a href="${KYNSKA_URL}">Kynska</a>, whose own code is MIT-licensed.</p>
 
-<footer>Built from Strudel ${pin.version} (${pin.commit.slice(0, 7)}) on every change to Kynska's main branch.</footer>
+<footer>Built from Strudel ${pinName(pin)}; rebuilt whenever Kynska moves to a newer commit of Strudel's ${pin.branch} or changes its own main branch.</footer>
 </main>
 </body>
 </html>

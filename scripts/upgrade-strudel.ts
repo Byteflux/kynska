@@ -1,23 +1,22 @@
-// Moves Kynska to another Strudel release in one step, then proves it:
-//   node scripts/upgrade-strudel.ts [version] [--tags-commit <sha>|main|none]
-// 1. checks npm has the version for every pinned package and finds the release's commit,
-// 2. writes strudel.json (tags from Strudel main unless told otherwise),
-// 3. installs the packages at exactly that version (and Mondo's at the versions that release uses),
-// 4. rebuilds the docs and runs the type check, the tests and the three sweeps.
+// Moves Kynska to the newest commit on Strudel's main branch, which strudel.cc
+// deploys on every push, or to a given commit, then proves it:
+//   node scripts/upgrade-strudel.ts [commit] [--if-changed]
+// 1. finds main's head (or takes the commit given), fetches it and reads its date,
+// 2. writes strudel.json,
+// 3. links Strudel's packages from that commit into node_modules (building superdough),
+// 4. rebuilds the docs and runs the type check, the tests, the three sweeps and the oracle evals.
 // It leaves the changes in place for review, and exits 1 if any step failed.
+// --if-changed stops at step 1, exit 0, when strudel.json already pins main's head.
 import { spawn } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { PIN_FILE, ROOT } from '../src/paths.ts';
-import { fetchCommit } from '../src/reference/build.ts';
-import { readPin } from '../src/reference/pin.ts';
-import { hasVersion, latestVersion, mainCommit, PINNED_PACKAGES, releaseCommit } from '../src/reference/upstream.ts';
+import { linkStrudel } from '../src/reference/link.ts';
+import { pinName, readPin, type StrudelPin } from '../src/reference/pin.ts';
+import { commitDate, fetchCommit } from '../src/reference/source.ts';
+import { branchCommit } from '../src/reference/upstream.ts';
 
-const { values, positionals } = parseArgs({
-  allowPositionals: true,
-  options: { 'tags-commit': { type: 'string', default: 'main' } },
-});
+const { values, positionals } = parseArgs({ allowPositionals: true, options: { 'if-changed': { type: 'boolean', default: false } } });
 
 const step = (n: number, text: string) => console.log(`\n[${n}] ${text}`);
 
@@ -29,42 +28,27 @@ function run(command: string, args: string[]): Promise<number> {
 }
 
 const pin = await readPin();
-const version = positionals[0] ?? (await latestVersion('@strudel/core'));
-step(1, `Strudel ${pin.version} -> ${version}`);
-const missing = [];
-for (const pkg of PINNED_PACKAGES) if (!(await hasVersion(pkg, version))) missing.push(pkg);
-if (missing.length) {
-  console.error(`npm has no ${version} of: ${missing.join(', ')}. Not upgrading.`);
+const commit = positionals[0] ?? (await branchCommit(pin.repository, pin.branch));
+if (!commit || !/^[0-9a-f]{40}$/.test(commit)) {
+  console.error(`No commit to move to: give a full SHA, or check that ${pin.repository} has a ${pin.branch} branch.`);
   process.exit(1);
 }
-const commit = await releaseCommit(pin.repository, version);
-if (!commit) {
-  console.error(`No tag @strudel/core@${version} in ${pin.repository}. Not upgrading.`);
-  process.exit(1);
+step(1, `Strudel ${pinName(pin)} -> ${commit.slice(0, 7)}`);
+if (commit === pin.commit) {
+  console.log('Already pinned: unchanged.');
+  if (values['if-changed']) process.exit(0);
 }
-// Mondo's packages carry their own version numbers; take them from the release's source.
 const source = await fetchCommit(pin.repository, commit);
-const mondoPackages: string[] = [];
-for (const dir of ['mondough', 'mondo']) {
-  const { name, version: v } = JSON.parse(await readFile(join(source, 'packages', dir, 'package.json'), 'utf8')) as { name: string; version: string };
-  if (!(await hasVersion(name, v))) {
-    console.error(`npm has no ${name}@${v}, which Strudel ${version} uses. Not upgrading.`);
-    process.exit(1);
-  }
-  mondoPackages.push(`${name}@${v}`);
-}
-const tagsOption = values['tags-commit']!;
-const tagsCommit = tagsOption === 'none' ? undefined : tagsOption === 'main' ? await mainCommit(pin.repository) : tagsOption;
-console.log(`release commit ${commit}${tagsCommit ? `, tags from ${tagsCommit}` : ''}`);
+const next: StrudelPin = { repository: pin.repository, branch: pin.branch, commit, date: await commitDate(source) };
 
-step(2, 'strudel.json');
-const next = { version, repository: pin.repository, tag: `@strudel/core@${version}`, commit, ...(tagsCommit ? { tagsCommit } : {}) };
+step(2, `strudel.json: ${pinName(next)}`);
 await writeFile(PIN_FILE, `${JSON.stringify(next, null, 2)}\n`);
 
-const installs = [...PINNED_PACKAGES.map((p) => `${p}@${version}`), ...mondoPackages];
-step(3, `npm install ${installs.join(' ')}`);
-if ((await run('npm', ['install', '--save-exact', ...installs])) !== 0) {
-  console.error('npm install failed; strudel.json is updated, package.json may not be.');
+step(3, 'link the packages');
+try {
+  console.log(`linked ${(await linkStrudel(next)).linked.join(', ')}`);
+} catch (error) {
+  console.error((error as Error).message);
   process.exit(1);
 }
 
@@ -74,6 +58,7 @@ const checks: [string, string, string[]][] = [
   ['check on documented examples', 'node', ['scripts/check-examples.ts']],
   ['check on docs code blocks', 'node', ['scripts/check-docs.ts']],
   ['onset detection', 'node', ['scripts/score-onsets.ts']],
+  ['oracle evals', 'node', ['evals/run.ts', '--agent', 'oracle']],
 ];
 const results: [string, number][] = [];
 for (const [i, [name, command, args]] of checks.entries()) {
@@ -82,5 +67,4 @@ for (const [i, [name, command, args]] of checks.entries()) {
 }
 console.log('\nSummary:');
 for (const [name, code] of results) console.log(`  ${code === 0 ? 'ok  ' : 'FAIL'} ${name}`);
-console.log('Review the changes (git diff) before committing.');
 process.exit(results.every(([, code]) => code === 0) ? 0 : 1);

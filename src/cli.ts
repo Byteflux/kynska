@@ -21,7 +21,7 @@ import { formatForm, formOf } from './patterns/form.ts';
 import { parseSections, windowOf as cycleWindow } from './patterns/sections.ts';
 import { buildReference } from './reference/build.ts';
 import { formatEntry, loadReference, MissingReferenceError, ReferenceIndex } from './reference/lookup.ts';
-import { readPin } from './reference/pin.ts';
+import { pinName, readPin } from './reference/pin.ts';
 import { formatUpstream, upstreamStatus } from './reference/upstream.ts';
 
 const USAGE = `Usage: kynska <command> [options]
@@ -321,8 +321,7 @@ async function main(argv: string[]): Promise<number> {
       const withExamples = reference.functions.filter((f) => f.examples.length).length;
       console.error(
         `Built ${relative(process.cwd(), `${ROOT}out/reference.json`) || 'out/reference.json'}: ` +
-          `${reference.functions.length} functions (${withExamples} with examples) from Strudel ${reference.strudel.version} ` +
-          `(${reference.strudel.commit.slice(0, 7)}).`,
+          `${reference.functions.length} functions (${withExamples} with examples) from Strudel ${pinName(reference.strudel)}.`,
       );
       return 0;
     }

@@ -1,11 +1,11 @@
-// Builds agent-ready docs from Strudel's docs site at the pinned version:
+// Builds agent-ready docs from Strudel's docs site at the pinned commit:
 // out/docs/<page>.md, out/docs/reference.md, out/llms.txt and out/llms-full.txt.
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { OUT_DIR } from '../paths.ts';
 import { buildReference, fetchStrudel } from '../reference/build.ts';
 import { formatEntry, ReferenceIndex } from '../reference/lookup.ts';
-import { readPin, type StrudelPin } from '../reference/pin.ts';
+import { pinName, readPin, type StrudelPin } from '../reference/pin.ts';
 import { convertPage, SITE } from './convert.ts';
 import { readSidebar } from './sidebar.ts';
 
@@ -74,7 +74,7 @@ export async function buildDocs(outDir = OUT_DIR): Promise<DocsResult> {
   const slugs = new Set(plan.map((p) => p.slug));
   const pages: DocsPage[] = [];
   const full: string[] = [];
-  const footer = (slug: string) => `\n---\n\nFrom ${SITE}/${slug}/ (Strudel ${pin.version}, ${STRUDEL_LICENCE}, converted by Kynska).\n`;
+  const footer = (slug: string) => `\n---\n\nFrom ${SITE}/${slug}/ (Strudel ${pinName(pin)}, ${STRUDEL_LICENCE}, converted by Kynska).\n`;
   for (const { slug, section, text } of plan) {
     let converted: ReturnType<typeof convertPage>;
     try {
@@ -99,7 +99,7 @@ export async function buildDocs(outDir = OUT_DIR): Promise<DocsResult> {
   const referenceText = [
     '# Strudel function reference',
     '',
-    `Every documented function in Strudel ${pin.version}, alphabetically. Each entry shows how to call it, its parameters and examples.`,
+    `Every documented function in Strudel ${pinName(pin)}, alphabetically. Each entry shows how to call it, its parameters and examples.`,
     '',
     `From Strudel's source (${sourceUrl(pin)}), licensed ${STRUDEL_LICENCE}; converted by Kynska (${KYNSKA_URL}).`,
     '',
@@ -110,7 +110,7 @@ export async function buildDocs(outDir = OUT_DIR): Promise<DocsResult> {
   const intro = [
     '# Strudel',
     '',
-    `> Strudel is a live coding environment for making music in the browser: patterns written in JavaScript with the TidalCycles pattern language, played at ${SITE}. These docs are Strudel ${pin.version}'s own documentation (commit ${pin.commit.slice(0, 7)}), converted to Markdown by Kynska.`,
+    `> Strudel is a live coding environment for making music in the browser: patterns written in JavaScript with the TidalCycles pattern language, played at ${SITE}. These docs are Strudel's own documentation at ${pinName(pin)}, the code strudel.cc runs, converted to Markdown by Kynska.`,
     '',
     `Licence: Strudel and its documentation are licensed ${STRUDEL_LICENCE}, and so are these converted docs. Source: ${sourceUrl(pin)}. Converter: ${KYNSKA_URL}.`,
     '',
@@ -137,7 +137,7 @@ export async function buildDocs(outDir = OUT_DIR): Promise<DocsResult> {
   await writeFile(llmsFullFile, llmsFull);
 
   return {
-    version: pin.version,
+    version: pinName(pin),
     commit: pin.commit,
     pages,
     files: { llms: llmsFile, llmsFull: llmsFullFile, reference: referenceFile },
@@ -151,7 +151,7 @@ const kb = (chars: number) => `${Math.round(chars / 1024)} KB, about ${Math.roun
 export function formatDocsResult(result: DocsResult): string {
   const rel = (p: string) => relative(process.cwd(), p) || p;
   const lines = [
-    `Built docs from Strudel ${result.version} (${result.commit.slice(0, 7)}):`,
+    `Built docs from Strudel ${result.version}:`,
     `  ${rel(result.files.llms)}: index of ${result.pages.length} pages`,
     `  ${rel(result.files.llmsFull)}: every page (${kb(result.sizes.llmsFull)})`,
     `  ${rel(dirname(result.files.reference))}/: one Markdown file per page, and reference.md (${kb(result.sizes.reference)})`,
