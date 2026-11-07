@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { extractCode, readReply, reasoningOptions, retryAfterMs, runAgent, runTool } from '../evals/agent.ts';
+import { extractCode, kynskaSystem, readReply, reasoningOptions, retryAfterMs, runAgent, runTool, toolSchema } from '../evals/agent.ts';
 import { eventF1 } from '../evals/score.ts';
 import { describeTasks, isFairExample, recreateTasks, scoreTask } from '../evals/tasks.ts';
 import type { PatternEvent } from '../src/patterns/events.ts';
@@ -66,6 +66,24 @@ describe('agent helpers', () => {
     expect(await runTool({ command: 'check', code: 's("bd").lpff(2)' }, reference)).toMatch(/unknown-method.*Did you mean `lpf`/);
     expect(await runTool({ command: 'lookup', name: 'cutoff' }, reference)).toContain('## lpf');
     expect(await runTool({ command: 'read', file: '../../etc/passwd' }, reference)).toMatch(/^error:/);
+    expect(await runTool({ command: 'harmony', code: 'keys: chord("<Am Dm E Am>").voicing()\nbass: note("<a1 d2 e2 a1>")', cycles: 4 }, reference)).toMatch(/all\s+A minor[\s\S]*outside the key: G# .*raised 7th/);
+  });
+
+  it('leaves the theory page, the genre cards and harmony out of kynska-without-theory', async () => {
+    const reference = new ReferenceIndex(smallReference);
+    const code = 'keys: chord("Am").voicing()';
+    expect(await runTool({ command: 'harmony', code }, reference, emptyCosts(), undefined, undefined, false)).toMatch(/^Unknown command "harmony"/);
+    expect(await runTool({ command: 'read', file: 'theory.md' }, reference, emptyCosts(), undefined, undefined, false)).toMatch(/^error: ENOENT/);
+    expect(await runTool({ command: 'read', file: 'genres/hip-hop.md' }, reference, emptyCosts(), undefined, undefined, false)).toMatch(/^error: ENOENT/);
+    expect(await runTool({ command: 'read', file: 'theory.md' }, reference)).toContain('# ');
+    const without = await kynskaSystem(false);
+    expect(without).not.toMatch(/theory\.md|genres\/|\bharmony\b|## Harmony|<!--/);
+    expect(without).toContain('6. **`kynska render song.js');
+    const withTheory = await kynskaSystem(true);
+    expect(withTheory).toMatch(/theory\.md[\s\S]*## Harmony/);
+    expect(withTheory).not.toContain('<!--');
+    expect(toolSchema(false).function.parameters.properties.command.enum).not.toContain('harmony');
+    expect(toolSchema(true).function.parameters.properties.command.enum).toContain('harmony');
   });
 
   it('keeps the baseline tool-less even if a reply contains a tool call', async () => {

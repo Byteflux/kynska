@@ -18,6 +18,7 @@ import { diffCode, formatDiff } from './patterns/diff.ts';
 import { languageOf, type Language } from './patterns/evaluate.ts';
 import { runPattern } from './patterns/events.ts';
 import { formatForm, formOf } from './patterns/form.ts';
+import { formatHarmony, harmonyOf } from './patterns/harmony.ts';
 import { parseSections, windowOf } from './patterns/sections.ts';
 import { formatEntry, loadReference, MissingReferenceError, ReferenceIndex } from './reference/lookup.ts';
 
@@ -178,6 +179,25 @@ export async function serveMcp(): Promise<void> {
       const { code, language } = await codeOf(args);
       const bySection = args.sections ? parseSections(args.sections) : undefined;
       return formatForm(await formOf(code, windowOf(args, 8, bySection).cycles, language, bySection));
+    }),
+  );
+
+  server.registerTool(
+    'harmony',
+    {
+      description:
+        'The harmony of a piece from its events: the key of each section and every note outside it (with the usual reason, e.g. the raised 7th of minor), the chord at each change over the bass, how often each other layer plays a chord tone on the beat, and clashes (a note a minor 2nd or 9th above a note another layer holds, not itself in the chord), by bar and beat.',
+      inputSchema: {
+        ...source,
+        cycles: z.number().positive().optional().describe('Cycles (default: all sections, or 8)'),
+        sections,
+        beatsPerCycle: z.number().positive().optional().describe('Beats in each bar, one bar per cycle (default 4)'),
+      },
+    },
+    tool(async (args) => {
+      const { code, language } = await codeOf(args);
+      const bySection = args.sections ? parseSections(args.sections) : undefined;
+      return formatHarmony(await harmonyOf(code, windowOf(args, 8, bySection).cycles, bySection, { beatsPerCycle: args.beatsPerCycle, language }));
     }),
   );
 

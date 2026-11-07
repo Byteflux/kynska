@@ -16,10 +16,13 @@ You cannot hear the music, so every claim you make about it needs **evidence** f
    - TidalCycles code to bring into Strudel: [tidal.md](tidal.md)
    - an existing song to recreate, with a MIDI file of it: [recreate.md](recreate.md)
    - a pattern that plays wrong, or an error: [debug.md](debug.md)
+   - choosing keys, chords, a melody against them, a key change or contrast between sections: [theory.md](theory.md), with compose
+   - a genre: its card in `genres/`, when there is one ([genres/hip-hop.md](genres/hip-hop.md): boom-bap); for a genre with no card, write the conventions you assume as numbers in step 3 (tempo, swing, where each drum falls, key, chords, form), and check them like any other event
 2. **Look up every function you are not sure of** before writing it: `kynska lookup <name>` gives how to call it, its parameters and examples, and suggests names for a typo. For a topic, `kynska docs path` locates the docs: start from `llms.txt`, an index of pages.
 3. **Write the expected events, then the code.** In a file (`.js`; `.mondo` for Mondo notation), and before running it, write down what should play: which sounds and notes, at which positions in the cycle, over how many cycles.
 4. **`kynska check song.js`** until it says OK. Read every warning: `engine-warning`, `ignored-control` and `silent` usually mean the music is not what you meant; `undocumented` and `browser-only` mean behaviour kynska cannot verify.
 5. **`kynska events song.js --cycles N`**, with N covering every variation and section, and compare with your expected events. On a mismatch, fix and go back to step 4. After an edit, `kynska diff before.js after.js --cycles N` shows exactly which events changed: only the intended ones should. For a piece in sections, `kynska form song.js --sections intro=4,A=16,B=12,outro=8` shows which layer plays in which cycles, events per section, and the notes each section uses.
+   - **For pitched music, then `kynska harmony song.js --sections <form>`**, and compare it with the keys and chords you planned: the key of each section, the chord at each change and the bar it starts in, the bass under it, and every note outside the key and every clash, each one you meant. A chord in the wrong bar or an out-of-key note you did not plan is a mistake: fix it and run harmony again. See *Harmony* below.
 6. **`kynska render song.js --cycles N --out song.wav`** and read the measurements.
 
 ## Time
@@ -33,6 +36,17 @@ A render takes from a fifth to three quarters of the audio's length, depending o
 `form`, `render --layers` and `render --sections` already measure layer balance, level per section, where the peak is, which layer plays where and the notes each section uses: reach for them before writing a script of your own.
 
 Done when `check` is OK, the events match what you wrote down for every cycle, and `render` exits 0 (every sound played) with 0 clipped samples **in the code's own mix**. With `--master`, that is the "Before mastering" line, not the file's: the limiter removes clipping from the file only, and strudel.cc plays the code unmastered. A render without `--master` measures the code directly. Do not answer while either shows clipped samples: lower the gains in the code and render again. A finished piece also reaches its loudness target: follow [mix.md](mix.md), which ends with `render --master=-14`. For drums, plucks and pianos, the onset line should match every event time; slow-attack sounds (flute, strings, pads) can show missing onsets, which is the detector, not the music.
+
+For pitched music, done also needs `kynska harmony` to show the keys and chords you planned, in the bars you planned, with every out-of-key note and clash one you meant.
+
+<!-- theory -->
+## Harmony
+
+- **One chord per bar is `<…>` with a comma inside each chord**: `note("<[c3,e3,g3] [a2,c3,e3]>")` or `chord("<C Am>").voicing()`. Without the angle brackets, `"[c3,e3,g3] [a2,c3,e3]"` plays both chords in every bar; with spaces instead of commas, `"[c3 e3 g3]"` is an arpeggio, one note after another. `harmony` names the chord at each change and the bar it starts in, so either mistake shows at once.
+- **A `<…>` list takes one entry per cycle**: a bass with 16 entries under 8 one-bar chords changes note every bar and drifts out of step with them. Give every layer that follows the chords the same number of entries, or `struct` the rhythm inside each bar.
+- **A key change**: every note of the new section belongs to the new key (D major has F# and C#, not F or C), its tonic chord comes first or last, and `harmony` names the new key for that section.
+- **Borrowed chords, the raised 7th of minor (the V chord) and blue notes are fine when meant**: `harmony` lists each outside note with its usual reason. [theory.md](theory.md) has the common ones, how to change key smoothly, and how a melody fits the chords.
+<!-- /theory -->
 
 ## Facts that catch everyone
 

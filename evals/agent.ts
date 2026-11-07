@@ -2,6 +2,8 @@
 //  - baseline: the task alone, one answer, no tools.
 //  - kynska: the strudel skill as instructions and a `kynska` tool mirroring the
 //    CLI, including offline render, plus reading skill and docs files.
+//  - kynska-without-theory: the same, without the theory page, the genre cards
+//    and the harmony command, to measure what they add.
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'node:path';
@@ -12,11 +14,19 @@ import { formatNotes, parseBars, readReferenceScore } from '../src/score/referen
 import { diffCode, formatDiff } from '../src/patterns/diff.ts';
 import { runPattern } from '../src/patterns/events.ts';
 import { formatForm, formOf } from '../src/patterns/form.ts';
+import { formatHarmony, harmonyOf } from '../src/patterns/harmony.ts';
 import { parseSections, windowOf } from '../src/patterns/sections.ts';
 import { formatEntry, type ReferenceIndex } from '../src/reference/lookup.ts';
 import { emptyCosts, evalRender, type RenderCosts } from './render.ts';
 
-export type Condition = 'baseline' | 'kynska';
+export type Condition = 'baseline' | 'kynska' | 'kynska-without-theory';
+export const CONDITIONS: Condition[] = ['baseline', 'kynska', 'kynska-without-theory'];
+const usesTools = (c: Condition) => c !== 'baseline';
+const withTheory = (c: Condition) => c === 'kynska';
+
+/** What kynska-without-theory leaves out: the theory page, the genre cards, SKILL.md's `<!-- theory -->` block, and its lines that send the agent to them or to harmony. */
+const isTheoryFile = (file: string) => file === 'theory.md' || file.startsWith('genres/');
+const THEORY_LINE = /theory\.md|genres\/|\bharmony\b/;
 
 /** `budgetMs`: wall-clock time after which a kynska run stops taking turns and
  * is asked for its final code, as when it runs out of turns.
@@ -37,35 +47,44 @@ type Message = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string
 type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
 
 const SKILL_DIR = join(ROOT, 'skills', 'strudel');
-const MAX_TURNS = 12;
+/** Tool turns before the agent is asked for its final code. At 12, after `harmony` joined the
+ * checking loop, 2 of 18 production runs used every turn in under a minute; asked for the final
+ * code without tools, glm-5.3 replied empty about 1 time in 3, and those two runs scored 0
+ * (offering tools for that request makes it call one instead). The minutes budget still bounds a run. */
+const MAX_TURNS = 16;
 const MAX_TOOL_OUTPUT = 6000;
 
 const BASELINE_SYSTEM = 'You write Strudel code (strudel.cc, the JavaScript port of TidalCycles). Answer with the code in one ```js block.';
 
-async function kynskaSystem(): Promise<string> {
-  const skill = (await readFile(join(SKILL_DIR, 'SKILL.md'), 'utf8')).replace(/^---[\s\S]*?---\n/, '');
+export async function kynskaSystem(theory = true): Promise<string> {
+  let skill = (await readFile(join(SKILL_DIR, 'SKILL.md'), 'utf8')).replace(/^---[\s\S]*?---\n/, '');
+  if (!theory) skill = skill.replace(/<!-- theory -->[\s\S]*?<!-- \/theory -->\n?/g, '').split('\n').filter((line) => !THEORY_LINE.test(line)).join('\n');
+  else skill = skill.replace(/<!-- \/?theory -->\n?/g, '');
+  const files = ['compose.md', 'arrange.md', 'mix.md', 'tidal.md', 'recreate.md', 'debug.md', ...(theory ? ['theory.md', 'genres/hip-hop.md'] : [])];
   return `${BASELINE_SYSTEM}
 
-In this environment you have no shell; the kynska CLI is the \`kynska\` tool, which takes code inline instead of a file. When a task comes with a reference song, its MIDI file is already loaded: \`notes\` and \`compare\` use it, with no file argument. Reference files beside the skill (compose.md, arrange.md, mix.md, tidal.md, recreate.md, debug.md) and docs pages (docs/learn/mini-notation.md, ...) are read with its "read" command. Use render to measure audio, layers and sections, draft with from/to, and master to a LUFS target. Each render is capped at 32 seconds including tails and uses cached sounds only. WAVs are temporary. When done, reply with the final code in one \`\`\`js block.
+In this environment you have no shell; the kynska CLI is the \`kynska\` tool, which takes code inline instead of a file. When a task comes with a reference song, its MIDI file is already loaded: \`notes\` and \`compare\` use it, with no file argument. Reference files beside the skill (${files.join(', ')}) and docs pages (docs/learn/mini-notation.md, ...) are read with its "read" command. Use render to measure audio, layers and sections, draft with from/to, and master to a LUFS target. Each render is capped at 32 seconds including tails and uses cached sounds only. WAVs are temporary. When done, reply with the final code in one \`\`\`js block.
 
 ${skill}`;
 }
 
-const TOOL = {
+const COMMANDS = ['check', 'events', 'diff', 'form', 'harmony', 'render', 'notes', 'compare', 'lookup', 'read'];
+
+export const toolSchema = (theory = true) => ({
   type: 'function',
   function: {
     name: 'kynska',
-    description: "Run a kynska command on Strudel code: check, events, diff, form, render, lookup, or read a skill or docs file; when the task has a reference MIDI file, notes reads it and compare checks code against it.",
+    description: `Run a kynska command on Strudel code: check, events, diff, form, ${theory ? 'harmony, ' : ''}render, lookup, or read a skill or docs file; when the task has a reference MIDI file, notes reads it and compare checks code against it.`,
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', enum: ['check', 'events', 'diff', 'form', 'render', 'notes', 'compare', 'lookup', 'read'] },
-        code: { type: 'string', description: 'Strudel code, for check, events, form, render and compare' },
+        command: { type: 'string', enum: COMMANDS.filter((c) => theory || c !== 'harmony') },
+        code: { type: 'string', description: `Strudel code, for check, events, form, ${theory ? 'harmony, ' : ''}render and compare` },
         bars: { type: 'string', description: 'for notes/compare: reference bars, e.g. "1-4"' },
-        beatsPerCycle: { type: 'number', description: 'for compare: quarter notes per cycle (default: found)' },
+        beatsPerCycle: { type: 'number', description: `for compare: quarter notes per cycle (default: found)${theory ? '; for harmony: beats per bar (default 4)' : ''}` },
         offset: { type: 'number', description: 'for compare: cycle where the first compared bar starts (default: found)' },
         transpose: { type: 'number', description: 'for compare: semitones the piece is meant to sound above the reference' },
-        sections: { type: 'string', description: 'for form/render: section lengths in cycles, e.g. "intro=4,A=8"' },
+        sections: { type: 'string', description: `for form/${theory ? 'harmony/' : ''}render: section lengths in cycles, e.g. "intro=4,A=8"` },
         from: { type: 'number', description: 'for render: first cycle, zero-based' },
         to: { type: 'number', description: 'for render: end cycle, exclusive; use to or cycles' },
         layers: { type: 'boolean', description: 'for render: measure each labelled layer alone too' },
@@ -74,20 +93,26 @@ const TOOL = {
         sampleRate: { type: 'number', description: 'for render: Hz, default 48000' },
         before: { type: 'string', description: 'for diff: the earlier code' },
         after: { type: 'string', description: 'for diff: the later code' },
-        cycles: { type: 'number', description: 'cycles to query or render (events, diff, check, form, render)' },
+        cycles: { type: 'number', description: `cycles to query or render (events, diff, check, form, ${theory ? 'harmony, ' : ''}render)` },
         name: { type: 'string', description: 'for lookup: a function name' },
         file: { type: 'string', description: 'for read: e.g. compose.md or docs/learn/mini-notation.md' },
       },
       required: ['command'],
     },
   },
-};
+});
 
-/** Runs one tool call, returning what the CLI would print. `midi`: the task's reference song, for notes and compare. */
-export async function runTool(args: Record<string, any>, reference: ReferenceIndex, costs: RenderCosts = emptyCosts(), directory?: string, midi?: Uint8Array): Promise<string> {
+/**
+ * Runs one tool call, returning what the CLI would print. `midi`: the task's
+ * reference song, for notes and compare. `theory: false` refuses harmony and the
+ * theory and genre pages, as for kynska-without-theory.
+ */
+export async function runTool(args: Record<string, any>, reference: ReferenceIndex, costs: RenderCosts = emptyCosts(), directory?: string, midi?: Uint8Array, theory = true): Promise<string> {
   const cycles = typeof args.cycles === 'number' && args.cycles > 0 ? Math.min(args.cycles, 64) : undefined;
   const number = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : undefined);
+  const commands = COMMANDS.filter((c) => theory || c !== 'harmony');
   try {
+    if (!theory && args.command === 'harmony') return `Unknown command "harmony"; use ${commands.slice(0, -1).join(', ')} or read.`;
     switch (args.command) {
       case 'notes':
       case 'compare': {
@@ -117,6 +142,11 @@ export async function runTool(args: Record<string, any>, reference: ReferenceInd
         const sections = args.sections ? parseSections(String(args.sections)) : undefined;
         return formatForm(await formOf(String(args.code ?? ''), Math.min(windowOf({ cycles }, 8, sections).cycles, 64), 'js', sections));
       }
+      case 'harmony': {
+        const sections = args.sections ? parseSections(String(args.sections)) : undefined;
+        const report = await harmonyOf(String(args.code ?? ''), Math.min(windowOf({ cycles }, 8, sections).cycles, 64), sections, { beatsPerCycle: number(args.beatsPerCycle) });
+        return formatHarmony(report);
+      }
       case 'lookup': {
         const entry = reference.find(String(args.name ?? ''));
         if (!entry) {
@@ -127,11 +157,12 @@ export async function runTool(args: Record<string, any>, reference: ReferenceInd
       }
       case 'read': {
         const file = normalize(String(args.file ?? '')).replace(/^(\.\.(\/|\\|$))+/, '');
+        if (!theory && isTheoryFile(file)) return `error: ENOENT: no such file or directory, open '${file}'`;
         const path = file.startsWith('docs/') ? join(OUT_DIR, file) : join(SKILL_DIR, file);
         return await readFile(path, 'utf8');
       }
       default:
-        return `Unknown command "${args.command}"; use check, events, diff, form, render, notes, compare, lookup or read.`;
+        return `Unknown command "${args.command}"; use ${commands.slice(0, -1).join(', ')} or read.`;
     }
   } catch (error) {
     return `error: ${(error as Error).message}`;
@@ -207,7 +238,8 @@ export function retryAfterMs(header: string | null, waitedMs: number): number {
   return Math.min(60_000, Math.max(5000, waitedMs));
 }
 
-async function complete(config: ModelConfig, messages: Message[], tools: boolean, costs: AgentCosts): Promise<Message> {
+/** `tool`: the kynska tool's schema to offer, or undefined to offer none. */
+async function complete(config: ModelConfig, messages: Message[], tool: ReturnType<typeof toolSchema> | undefined, costs: AgentCosts): Promise<Message> {
   let lastError: unknown;
   let rateLimitedMs = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -216,7 +248,7 @@ async function complete(config: ModelConfig, messages: Message[], tools: boolean
       const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({ model: config.model, messages, temperature: config.temperature ?? 0, ...reasoningOptions(config), max_tokens: MAX_REPLY_TOKENS, stream: true, stream_options: { include_usage: true }, ...(tools ? { tools: [TOOL] } : {}) }),
+        body: JSON.stringify({ model: config.model, messages, temperature: config.temperature ?? 0, ...reasoningOptions(config), max_tokens: MAX_REPLY_TOKENS, stream: true, stream_options: { include_usage: true }, ...(tool ? { tools: [tool] } : {}) }),
         signal: AbortSignal.timeout(REPLY_TIMEOUT_MS),
       });
       // Rate limited: wait as long as the API asks and try again, without
@@ -272,20 +304,22 @@ export async function runAgent(prompt: string, condition: Condition, config: Mod
 }
 
 async function runAgentTurns(prompt: string, condition: Condition, config: ModelConfig, reference: ReferenceIndex, costs: AgentCosts, directory: string, midi?: Uint8Array): Promise<AgentResult> {
-  const withMidi = condition === 'kynska' && midi ? `${prompt}\n\nThe excerpt is also loaded as a MIDI file for the kynska tool: notes prints it, compare checks code against it.` : prompt;
+  const tools = usesTools(condition);
+  const theory = withTheory(condition);
+  const withMidi = tools && midi ? `${prompt}\n\nThe excerpt is also loaded as a MIDI file for the kynska tool: notes prints it, compare checks code against it.` : prompt;
   const messages: Message[] = [
-    { role: 'system', content: condition === 'kynska' ? await kynskaSystem() : BASELINE_SYSTEM },
+    { role: 'system', content: tools ? await kynskaSystem(theory) : BASELINE_SYSTEM },
     { role: 'user', content: withMidi },
   ];
   const deadline = performance.now() + (config.budgetMs ?? Infinity);
   let turn = 1;
   // Waiting out rate limits does not use up the turn budget.
   const ownTime = () => performance.now() - (costs.rateLimitedSeconds ?? 0) * 1000;
-  for (; turn <= (condition === 'kynska' ? MAX_TURNS : 1) && (turn === 1 || ownTime() < deadline); turn++) {
+  for (; turn <= (tools ? MAX_TURNS : 1) && (turn === 1 || ownTime() < deadline); turn++) {
     costs.turns = turn;
-    const message = await complete(config, messages, condition === 'kynska', costs);
+    const message = await complete(config, messages, tools ? toolSchema(theory) : undefined, costs);
     messages.push({ role: 'assistant', content: message.content ?? '', ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}) });
-    if (condition === 'baseline' || !message.tool_calls?.length) return { code: extractCode(message.content ?? ''), ...costs, transcript: messages };
+    if (!tools || !message.tool_calls?.length) return { code: extractCode(message.content ?? ''), ...costs, transcript: messages };
     for (const call of message.tool_calls) {
       costs.toolCalls++;
       let args: Record<string, unknown> = {};
@@ -294,14 +328,14 @@ async function runAgentTurns(prompt: string, condition: Condition, config: Model
       } catch {
         // leave empty; the tool reports the unknown command
       }
-      const output = (await runTool(args, reference, costs, directory, midi)).slice(0, MAX_TOOL_OUTPUT);
+      const output = (await runTool(args, reference, costs, directory, midi, theory)).slice(0, MAX_TOOL_OUTPUT);
       messages.push({ role: 'tool', tool_call_id: call.id, content: output });
     }
   }
   // Out of turns or time: ask for the final answer without tools.
   messages.push({ role: 'user', content: 'Reply now with your final code in one ```js block.' });
   costs.turns = turn;
-  const message = await complete(config, messages, false, costs);
+  const message = await complete(config, messages, undefined, costs);
   messages.push({ role: 'assistant', content: message.content ?? '' });
   return { code: extractCode(message.content ?? ''), ...costs, transcript: messages };
 }

@@ -12,6 +12,7 @@ Both at once need the **gap** between peak and loudness to be 13 dB or less: lou
 ## How levels behave (measured)
 
 - `.gain(x)` scales amplitude linearly: `gain(0.5)` is 6 dB quieter. Use it for balance.
+- **A layer without `.gain()` plays at 0.8**, superdough's default, not 1: adding `gain(1)` makes it about 2 dB louder, and `gain(0.4)` is 6 dB below no gain at all. Give every layer a gain before balancing, so ratios between layers mean what they say.
 - `.postgain(x)` and `.velocity(x)` are not linear: 0.5 measured 8 dB quieter. Leave them for musical accents.
 - Layers add up: the mix peaks where several layers hit together (often the downbeat), above any layer alone, so a mix of moderate layers can still clip.
 - **Strudel has no limiter on the mix.** Every event reaches the output through its own chain, so `.compressor()` and `.distort()` act on each hit alone, never on the sum:

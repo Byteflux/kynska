@@ -1,6 +1,6 @@
 // Runs the evals: node evals/run.ts [--agent llm|oracle] [--model M]
-//   [--conditions baseline,kynska] [--kinds transcribe,describe,produce,recreate]
-//   [--transcribe N] [--concurrency N] [--minutes M] [--repeats N]
+//   [--conditions baseline,kynska,kynska-without-theory] [--kinds transcribe,describe,produce,recreate]
+//   [--tasks id,id] [--transcribe N] [--concurrency N] [--minutes M] [--repeats N]
 //   [--temperature T] [--effort low|medium|high|...|default] [--reasoning-tokens N]
 // The llm agent reads KYNSKA_EVAL_BASE_URL and KYNSKA_EVAL_API_KEY (an
 // OpenAI-compatible API). The oracle agent answers with each task's known
@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { OUT_DIR } from '../src/paths.ts';
 import { loadReference, ReferenceIndex } from '../src/reference/lookup.ts';
-import { runAgent, type AgentCosts, type Condition } from './agent.ts';
+import { CONDITIONS, runAgent, type AgentCosts, type Condition } from './agent.ts';
 import { describeTasks, produceTasks, recreateTasks, scoreTask, transcribeTasks, type Task } from './tasks.ts';
 import { emptyCosts } from './render.ts';
 import { summarize, type Row } from './summary.ts';
@@ -24,6 +24,8 @@ const { values } = parseArgs({
     conditions: { type: 'string', default: 'baseline,kynska' },
     transcribe: { type: 'string', default: '16' },
     kinds: { type: 'string', default: 'transcribe,describe,produce,recreate' },
+    // Only these task ids, e.g. produce/boom-bap,produce/key-change.
+    tasks: { type: 'string' },
     concurrency: { type: 'string', default: '4' },
     repeats: { type: 'string', default: '1' },
     // Per kynska run: after this many minutes it is asked for its final code.
@@ -43,14 +45,18 @@ if (!['llm', 'oracle'].includes(values.agent!)) throw new Error('agent must be l
 const reference = new ReferenceIndex(await loadReference());
 const kinds = new Set(values.kinds!.split(','));
 if ([...kinds].some((k) => !['transcribe', 'describe', 'produce', 'recreate'].includes(k))) throw new Error('kinds must be from transcribe,describe,produce,recreate');
-const tasks: Task[] = [
+const allTasks: Task[] = [
   ...(kinds.has('transcribe') ? await transcribeTasks(reference.reference, Number(values.transcribe)) : []),
   ...(kinds.has('describe') ? describeTasks : []),
   ...(kinds.has('produce') ? produceTasks : []),
   ...(kinds.has('recreate') ? recreateTasks() : []),
 ];
+const only = values.tasks?.split(',').map((t) => t.trim()).filter(Boolean);
+const unknownTasks = only?.filter((id) => !allTasks.some((t) => t.id === id)) ?? [];
+if (unknownTasks.length) throw new Error(`unknown tasks (in the chosen kinds): ${unknownTasks.join(', ')}`);
+const tasks = only ? allTasks.filter((t) => only.includes(t.id)) : allTasks;
 const conditions = (values.agent === 'oracle' ? ['oracle'] : values.conditions!.split(',')) as (Condition | 'oracle')[];
-if (values.agent !== 'oracle' && conditions.some((c) => c !== 'baseline' && c !== 'kynska')) throw new Error('conditions must be baseline,kynska');
+if (values.agent !== 'oracle' && conditions.some((c) => !CONDITIONS.includes(c as Condition))) throw new Error(`conditions must be from ${CONDITIONS.join(',')}`);
 const config =
   values.agent === 'llm'
     ? {

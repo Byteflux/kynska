@@ -161,7 +161,8 @@ function align(ref: RefN[], pieceCycles: PieceN[], candidates: number[], tol: nu
   return natural && natural.score >= best!.score - Math.max(2, 0.1 * ref.length) ? natural : best!;
 }
 
-async function pieceNotes(code: string, cycles: number, language: Language): Promise<{ notes: PieceN[]; cps: number; uncompared: Map<string, number> }> {
+/** Every layer's notes, played alone, in cycles: pitches as MIDI numbers, drums by name; `uncompared` counts events with neither. */
+export async function pieceNotes(code: string, cycles: number, language: Language): Promise<{ notes: PieceN[]; cps: number; uncompared: Map<string, number> }> {
   const { core } = await ensureScope();
   const all = language === 'mondo' ? [] : findLayers(code);
   const playing = playingLayers(all);

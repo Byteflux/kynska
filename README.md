@@ -64,6 +64,7 @@ how many cycles to render or list.
 | `check [file] [--cycles N]` | Syntax, unknown functions and methods (with suggestions), undocumented and browser-only functions, evaluation and query errors, Strudel's own warnings, silence (default 4 cycles) |
 | `diff <before> <after> [--cycles N]` | What changed between the events of two versions: changed, removed, added |
 | `form [file] [--cycles N] [--sections S]` | Which layer (`$:` or named label) plays which sounds in which cycles; with sections, events per layer per section and the note names each section uses |
+| `harmony [file] [--cycles N] [--sections S] [--beats-per-cycle B]` | The key of each section (Krumhansl–Kessler key profiles over note durations) and every note outside it with its usual reason, key changes between sections, the chord at each change over the bass, how often each other layer plays a chord tone on the beat, and clashes: a note a minor 2nd or 9th above a note another layer holds, not itself in the chord, by bar and beat |
 | `render [file] [--cycles N \| --from A --to B] [--sections S] [--layers] [--master=LUFS] [--out file.wav] [--tail S] [--sample-rate R]` | Renders N cycles (default 4), or cycles A to B, to a 16-bit WAV (default `./render.wav`) and reports level (and the cycle of the peak), loudness (LUFS), clipping, silence, and onsets against the pattern's events; `--sections` adds them per section, `--layers` renders each layer alone and measures it beside the mix, `--master=-14` writes the file mastered to that loudness |
 | `analyse <file.wav> [--sections S --cps C]` | The same measurements for any WAV file |
 | `notes <reference.mid> [--bars A-B] [--parts 1,2]` | A MIDI file's parts, metre and tempo, and each bar as one cycle of mini-notation where it can be (otherwise beat, notes and length) |
@@ -73,7 +74,7 @@ how many cycles to render or list.
 | `docs build` / `docs path` | Build everything in `out/` (below) / print where it is |
 | `reference build` | Build `out/reference.json` only |
 | `upstream` | Compare the pinned Strudel commit with Strudel's `main` today |
-| `mcp` | Serve `check`, `events`, `diff`, `form`, `notes`, `compare`, `lookup`, `render` and `docs_path` as MCP tools over stdio |
+| `mcp` | Serve `check`, `events`, `diff`, `form`, `harmony`, `notes`, `compare`, `lookup`, `render` and `docs_path` as MCP tools over stdio |
 
 Exit codes: 0 success; 1 errors found (`check`), a difference (`diff`, `compare`), an event
 that failed to play (`render`, e.g. an unknown sound) or a failure; 2 bad usage.
@@ -189,16 +190,20 @@ tools against Strudel's own material (CI runs all of them):
 
 ### Evals
 
-`npm run evals` scores a model on 36 tasks, alone (`baseline`) and with the
+`npm run evals` scores a model on 40 tasks, alone (`baseline`) and with the
 `strudel` skill plus a `kynska` tool (`kynska`):
 
 - **transcribe** (16): write code producing these events; tasks generated from
   Strudel's documented examples; scored by event F1.
 - **describe** (8): a musical brief in words; scored by criteria on the events.
-- **produce** (6): 8–16 bar production briefs, scored from the rendered audio
+- **produce** (10): 8–16 bar production briefs, scored from the rendered audio
   and events: tempo, duration, loudness, peaks, clipping, section entrances,
-  key, bass range, layer count and loudness contrast between sections. Known
-  solutions use Roland TR-909 drums and built-in synths.
+  key, bass range, layer count and loudness contrast between sections. Four
+  of them name a genre or a musical idea instead of the notes: a boom-bap
+  beat (tempo in the genre's range, snare on 2 and 4, swung eighths, a minor
+  key), a key change a whole step up, a melody over given chords (chord tones
+  on the beat, no clashes, as `harmony` finds them) and a borrowed chord.
+  Known solutions use Roland TR-909 drums and built-in synths.
 - **recreate** (6): four bars of a real piece from `test/references`, given to
   both conditions as a plain list of notes by bar and beat; scored by
   `compare`'s F1 against the excerpt's MIDI file, halved when the tempo is more
@@ -216,7 +221,9 @@ npm run evals -- --model <model> --repeats 3 --concurrency 4 --minutes 6
 
 `--repeats N` runs every task and condition N times (default 1). `--conditions
 baseline,kynska` chooses conditions and `--kinds transcribe,describe,produce,recreate`
-task kinds; `--transcribe N` changes the number of
+task kinds; `--tasks id,id` runs only those tasks. The condition
+`kynska-without-theory` is the Kynska agent without the theory page, the genre
+cards and `harmony`, to measure what they add. `--transcribe N` changes the number of
 transcription tasks (default 16). `--minutes M` is the Kynska agent's turn budget
 in minutes (default 6), after which it is asked for final code. `--concurrency N`
 caps concurrent jobs (default 4); whatever it is, at most two renders run at

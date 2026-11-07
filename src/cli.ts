@@ -18,6 +18,7 @@ import { diffCode, formatDiff } from './patterns/diff.ts';
 import { languageOf, type Language } from './patterns/evaluate.ts';
 import { runPattern } from './patterns/events.ts';
 import { formatForm, formOf } from './patterns/form.ts';
+import { formatHarmony, harmonyOf } from './patterns/harmony.ts';
 import { parseSections, windowOf as cycleWindow } from './patterns/sections.ts';
 import { buildReference } from './reference/build.ts';
 import { formatEntry, loadReference, MissingReferenceError, ReferenceIndex } from './reference/lookup.ts';
@@ -45,6 +46,10 @@ Commands:
   form [file] [--cycles N] [--sections S] [--json]
                                           Which layer plays which sounds in which cycles; with
                                           sections, events per section and the notes each uses
+  harmony [file] [--cycles N] [--sections S] [--beats-per-cycle B] [--json]
+                                          Key of each section and the notes outside it, the chord
+                                          at each change over its bass, chord tones on the beat,
+                                          and clashes between layers
   render [file] [--cycles N | --from A --to B] [--sections S] [--layers] [--master=LUFS]
          [--out file.wav] [--tail S] [--sample-rate R] [--json]
                                           Render to a WAV file (default 4 cycles, ./render.wav)
@@ -57,7 +62,7 @@ Commands:
   docs build                              Build out/reference.json, the docs pages, llms.txt and llms-full.txt
   docs path                               Print where the built docs are (llms.txt, llms-full.txt, pages, reference.md)
   upstream                                Compare the pinned Strudel with its latest release and main
-  mcp                                     Serve check, events, diff, form, notes, compare, lookup, render and docs_path as MCP tools (stdio)
+  mcp                                     Serve check, events, diff, form, harmony, notes, compare, lookup, render and docs_path as MCP tools (stdio)
 
 Code is read from a file, or from stdin when the file is "-" or omitted. It is JavaScript,
 which can use mondo\`...\` and tidal\`...\` inline; --mondo (or a .mondo file) reads it as
@@ -68,6 +73,7 @@ Sections are lengths in cycles, in order, as arrange() takes them: "intro=4,A=16
 compare counts in quarter notes: --beats-per-cycle is quarter notes per cycle (default: found,
 usually one bar), --offset the cycle where the first compared bar starts (default: found),
 --tolerance how far apart onsets still match (default 1/16 of a quarter note).
+harmony counts --beats-per-cycle beats in each bar (default 4), one bar per cycle.
 Exit codes: 0 success; 1 errors found (check), a difference (diff, compare), an event that
 failed to play (render) or failure; 2 bad usage.`;
 
@@ -286,6 +292,13 @@ async function main(argv: string[]): Promise<number> {
     case 'form': {
       const form = await formOf(await readCode(args[0]), windowOf(8).cycles, language(args[0]), sections);
       print(form, () => formatForm(form));
+      return 0;
+    }
+    case 'harmony': {
+      const beats = values['beats-per-cycle'] === undefined ? undefined : Number(values['beats-per-cycle']);
+      if (beats !== undefined && !(beats > 0)) throw new UsageError(`--beats-per-cycle must be a positive number, got "${values['beats-per-cycle']}"`);
+      const report = await harmonyOf(await readCode(args[0]), windowOf(8).cycles, sections, { beatsPerCycle: beats, language: language(args[0]) });
+      print(report, () => formatHarmony(report));
       return 0;
     }
     case 'mcp': {
