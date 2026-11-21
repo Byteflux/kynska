@@ -6,3 +6,5 @@ out/
 site/
 dist/
 coverage/
+# Local pieces and their rendered WAVs.
+songs/
