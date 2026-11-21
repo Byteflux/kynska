@@ -10,6 +10,7 @@ import { emptyCosts, evalRender, offlineRenders, withRenderSlot } from '../evals
 import { summarize, type Row } from '../evals/summary.ts';
 import { reportRender } from '../src/audio/report.ts';
 import { access } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 const ev = (begin: string, end: string, value: Record<string, unknown>): PatternEvent => ({ begin, end, value, show: '' });
 
@@ -107,7 +108,7 @@ describe('agent helpers', () => {
     try {
       const result = await runAgent('brief', 'kynska', { baseUrl: 'https://mock.invalid', apiKey: 'mock', model: 'mock' }, new ReferenceIndex(smallReference));
       expect(result).toMatchObject({ code, turns: 2, toolCalls: 1, tokens: 50, renderCalls: 1, renderSeconds: 1 });
-      expect(JSON.stringify(result.transcript)).toContain('Wrote /tmp/');
+      expect(JSON.stringify(result.transcript)).toContain(`Wrote ${tmpdir()}/`);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -309,7 +310,7 @@ describe('eval rendering', () => {
   it('returns CLI reports for drafts, layers, sections and mastering; removes its temp WAV', async () => {
     const costs = emptyCosts();
     const result = await evalRender('setcpm(60)\n$: note("c3").s("sine")\n$: note("g4").s("triangle")', { sections: 'a=1,b=1', from: 1, to: 2, layers: true, master: -18, tail: .1 }, costs);
-    expect(result.text).toContain('Wrote /tmp/');
+    expect(result.text).toContain(`Wrote ${tmpdir()}/`);
     expect(result.text).toContain('By section:');
     expect(result.text).toContain('Layers, each rendered alone:');
     expect(result.text).toContain('Master');
