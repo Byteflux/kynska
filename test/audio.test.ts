@@ -182,6 +182,11 @@ describe('soundfont data guard', () => {
     expect(isPlainData(file)).toBe(true);
   });
 
+  it('accepts literal number arithmetic, as in upstream originalPitch:4200-140', () => {
+    expect(isPlainData('var x={zones:[{originalPitch:4200-140}]};')).toBe(true);
+    expect(isPlainData('var x={zones:[{originalPitch:4200-140-10}]};')).toBe(true);
+  });
+
   it.each([
     ['a call', "var x={zones:[{file:fetch('x')}]};"],
     ['a function', 'var x={zones(){ return 1 }};'],

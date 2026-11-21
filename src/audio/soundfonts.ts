@@ -43,6 +43,9 @@ export function isPlainData(source: string): boolean {
         return !(n.value instanceof RegExp);
       case 'UnaryExpression':
         return (n.operator === '-' || n.operator === '+') && n.argument.type === 'Literal' && typeof n.argument.value === 'number';
+      case 'BinaryExpression':
+        // Number-literal arithmetic, as in upstream originalPitch:4200-140.
+        return (n.operator === '-' || n.operator === '+') && [n.left, n.right].every(data);
       case 'TemplateLiteral':
         return n.expressions.length === 0;
       case 'ArrayExpression':
